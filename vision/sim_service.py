@@ -8,9 +8,9 @@ from fastapi import FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
-from connect_4.config import BOARD, SERVICES, VISION_SIM
-from connect_4.game_engine.board import Cell
-from connect_4.vision.sim_world import VisionState, SimBoard
+from connect4_robot.config import BOARD, SERVICES, VISION_SIM
+from connect4_robot.game_engine.board import Cell
+from connect4_robot.vision.sim_world import VisionState, SimBoard
 
 app = FastAPI(title="Connect4 Vision Sim Service", version="1.0.0")
 state = VisionState()
@@ -252,7 +252,7 @@ def ui():
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
-        "connect_4.vision.sim_service:app",
+        "connect4_robot.vision.sim_service:app",
         host=SERVICES.vision_host,
         port=SERVICES.vision_port,
         reload=False,

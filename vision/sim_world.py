@@ -3,8 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import List, Optional
 
-from connect_4.config import BOARD
-from connect_4.game_engine.board import Cell
+from connect4_robot.config import BOARD
+from connect4_robot.game_engine.board import Cell
 
 
 @dataclass

@@ -4,8 +4,8 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 
-from connect_4.config import SERVICES
-from connect_4.game_engine import (
+from connect4_robot.config import SERVICES
+from connect4_robot.game_engine import (
     build_orchestrator,
     ControllerStatus,
     VisionBoardUpdate,

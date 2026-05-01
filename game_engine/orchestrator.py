@@ -3,8 +3,8 @@ from __future__ import annotations
 import threading
 import time
 
-from connect_4.config import BOARD, MOTOR
-from connect_4.motor_control import (
+from connect4_robot.config import BOARD, MOTOR
+from connect4_robot.motor_control import (
     MotorTransport,
     MotorController,
     LinearAxisCalibration,

@@ -7,7 +7,7 @@ from typing import List, Optional
 
 from pydantic import BaseModel, Field
 
-from connect_4.config import BOARD
+from connect4_robot.config import BOARD
 from .board import Connect4Board
 
 

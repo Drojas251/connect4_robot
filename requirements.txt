@@ -3,3 +3,7 @@ fastapi
 requests
 pydantic
 pyserial
+pillow
+pupil-apriltags
+scikit-learn
+joblib

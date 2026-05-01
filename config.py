@@ -6,10 +6,10 @@ from typing import List
 
 @dataclass
 class MotorConfig:
-    port: str = "/dev/ttyACM1"
+    port: str = "/dev/ttyACM0"
     baudrate: int = 115200
     timeout_s: float = 0.1
-    deg_per_mm: float = 5.54
+    deg_per_mm: float = -5.54
     deg_offset: float = 0.0
 
 
