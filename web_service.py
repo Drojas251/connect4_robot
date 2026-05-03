@@ -6,8 +6,8 @@ from contextlib import asynccontextmanager
 from typing import Optional
 
 import requests
-from fastapi import FastAPI
-from fastapi.responses import HTMLResponse
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 
 from connect4_robot.config import BOARD, SERVICES
@@ -63,8 +63,8 @@ def _poll_loop(url: str, interval: float, ok_attr: str, data_attr: str):
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     for url, interval, ok_attr, data_attr in [
-        (SERVICES.orchestrator_url, 1.5, "orch_ok",       "orchestrator_data"),
-        (SERVICES.vision_url,       3.0, "vision_svc_ok", "vision_svc_data"),
+        (SERVICES.orchestrator_url, 1.0, "orch_ok",       "orchestrator_data"),
+        (SERVICES.vision_url,       1.0, "vision_svc_ok", "vision_svc_data"),
     ]:
         t = threading.Thread(
             target=_poll_loop, args=(url, interval, ok_attr, data_attr), daemon=True
@@ -120,6 +120,27 @@ def api_resume():
         except Exception as e:
             results[name] = {"error": str(e)}
     return {"ok": True, "results": results}
+
+
+@app.post("/api/retry_detection")
+def retry_detection():
+    """Restart vision detection only — does NOT home the robot."""
+    try:
+        r = requests.post(f"{SERVICES.vision_url}/reset", timeout=3)
+        return {"ok": True, "vision": r.json()}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/vision_image")
+def vision_image():
+    """Proxy the detection image from the vision service."""
+    try:
+        resp = requests.get(f"{SERVICES.vision_url}/api/detection_image", timeout=3)
+        resp.raise_for_status()
+        return Response(content=resp.content, media_type="image/jpeg")
+    except Exception:
+        raise HTTPException(status_code=404, detail="Detection image not available")
 
 
 @app.post("/api/reset")
@@ -182,6 +203,34 @@ _HTML = f"""<!doctype html>
 
     /* ---- Main layout ---- */
     .main-grid {{ display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: start; }}
+
+    /* ---- Detection panel ---- */
+    .det-panel {{
+      border-radius: 12px; padding: 14px 16px; margin-bottom: 16px;
+      border: 1px solid #333; background: #111;
+      transition: border-color 0.3s, background 0.3s;
+    }}
+    .det-panel.searching   {{ border-color: #ffa000; }}
+    .det-panel.checking    {{ border-color: #ffa000; }}
+    .det-panel.detection_failed {{ border-color: #c62828; background: #1a0000; }}
+    .det-panel.board_not_empty  {{ border-color: #e65100; background: #1a0d00; }}
+    .det-panel.ready       {{ border-color: #2e7d32; background: #071207; }}
+    .det-panel.hidden      {{ display: none; }}
+    .det-header  {{ display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }}
+    .det-icon    {{ font-size: 1.4rem; width: 28px; text-align: center; flex-shrink: 0; }}
+    .det-text    {{ flex: 1; min-width: 0; }}
+    .det-title   {{ font-weight: bold; font-size: 0.95rem; color: #fff; }}
+    .det-msg     {{ font-size: 0.82rem; color: #999; margin-top: 3px; }}
+    .det-img     {{ display: block; margin-top: 12px; max-width: 100%;
+                    border-radius: 8px; border: 1px solid #333; }}
+    .btn-retry   {{ background: #bf360c; color: #fff; padding: 7px 16px;
+                    border: none; border-radius: 7px; cursor: pointer;
+                    font-weight: bold; font-size: 0.85rem; }}
+    .btn-dismiss {{ background: #1b5e20; color: #fff; padding: 7px 16px;
+                    border: none; border-radius: 7px; cursor: pointer;
+                    font-weight: bold; font-size: 0.85rem; }}
+    @keyframes spin {{ to {{ transform: rotate(360deg); }} }}
+    .spin {{ display: inline-block; animation: spin 1s linear infinite; }}
 
     /* ---- Board section ---- */
     .board-section {{ display: flex; flex-direction: column; gap: 0; }}
@@ -273,6 +322,20 @@ _HTML = f"""<!doctype html>
     <button class="btn-pause"  onclick="doAction('pause')">Pause</button>
     <button class="btn-resume" onclick="doAction('resume')">Resume</button>
     <button class="btn-reset"  onclick="doAction('reset')">Reset</button>
+  </div>
+
+  <!-- Detection panel -->
+  <div id="detPanel" class="det-panel searching">
+    <div class="det-header">
+      <div class="det-icon" id="detIcon"><span class="spin">⟳</span></div>
+      <div class="det-text">
+        <div class="det-title" id="detTitle">Detecting Board</div>
+        <div class="det-msg"   id="detMsg">Searching for board corners…</div>
+      </div>
+      <button class="btn-retry"   id="btnRetry"   onclick="retryDetection()" style="display:none">Retry Detection</button>
+      <button class="btn-dismiss" id="btnDismiss" onclick="dismissDetection()" style="display:none">Dismiss</button>
+    </div>
+    <img id="detImg" class="det-img" style="display:none" alt="Board detection overlay">
   </div>
 
   <div class="main-grid">
@@ -492,6 +555,7 @@ _HTML = f"""<!doctype html>
 
         setSvc('svcVision', data.vision_svc_ok);
         setSvc('svcOrch',   data.orch_ok);
+        updateDetectionPanel(data.vision_svc || {{}});
 
         const board = data.vision_board || o.board_top_down || null;
         renderBoard(board, o.last_human_col, o.last_robot_col);
@@ -512,6 +576,77 @@ _HTML = f"""<!doctype html>
       }}
     }}
 
+    // ── Detection panel ──────────────────────────────────────────────
+    let _detReady = false;
+    let _detDismissTimer = null;
+
+    const DET_CFG = {{
+      searching:        {{ icon: '<span class="spin">⟳</span>', title: 'Detecting Board',       retry: false, dismiss: false, img: false }},
+      checking:         {{ icon: '<span class="spin">⟳</span>', title: 'Checking Board',        retry: false, dismiss: false, img: true  }},
+      detection_failed: {{ icon: '✗',                           title: 'Board Not Detected',    retry: true,  dismiss: false, img: true  }},
+      board_not_empty:  {{ icon: '⚠',                           title: 'Board Not Empty',       retry: true,  dismiss: false, img: true  }},
+      ready:            {{ icon: '✓',                           title: 'Board Ready',           retry: false, dismiss: true,  img: true  }},
+    }};
+
+    function updateDetectionPanel(vsvc) {{
+      const phase = vsvc && vsvc.detection_phase;
+      if (!phase) return;
+
+      const panel    = document.getElementById('detPanel');
+      const cfg      = DET_CFG[phase] || DET_CFG.searching;
+
+      // If already dismissed and still ready, leave hidden
+      if (_detReady && phase === 'ready' && panel.classList.contains('hidden')) return;
+
+      // Re-show panel whenever we're not ready
+      if (phase !== 'ready') {{
+        _detReady = false;
+        panel.classList.remove('hidden');
+        if (_detDismissTimer) {{ clearTimeout(_detDismissTimer); _detDismissTimer = null; }}
+      }}
+
+      panel.className = 'det-panel ' + phase;
+      document.getElementById('detIcon').innerHTML  = cfg.icon;
+      document.getElementById('detTitle').textContent = cfg.title;
+      document.getElementById('detMsg').textContent   = vsvc.detection_message || '';
+      document.getElementById('btnRetry').style.display   = cfg.retry   ? '' : 'none';
+      document.getElementById('btnDismiss').style.display = cfg.dismiss ? '' : 'none';
+
+      const img = document.getElementById('detImg');
+      if (cfg.img && vsvc.detection_image_available) {{
+        img.src = '/api/vision_image?t=' + Date.now();
+        img.style.display = '';
+      }} else {{
+        img.style.display = 'none';
+      }}
+
+      // Auto-dismiss after 6 s when ready
+      if (phase === 'ready' && !_detReady) {{
+        _detReady = true;
+        _detDismissTimer = setTimeout(() => panel.classList.add('hidden'), 6000);
+      }}
+    }}
+
+    function retryDetection() {{
+      _detReady = false;
+      if (_detDismissTimer) {{ clearTimeout(_detDismissTimer); _detDismissTimer = null; }}
+      const panel = document.getElementById('detPanel');
+      panel.className = 'det-panel searching';
+      panel.classList.remove('hidden');
+      const cfg = DET_CFG.searching;
+      document.getElementById('detIcon').innerHTML    = cfg.icon;
+      document.getElementById('detTitle').textContent = cfg.title;
+      document.getElementById('detMsg').textContent   = 'Restarting detection…';
+      document.getElementById('btnRetry').style.display   = 'none';
+      document.getElementById('btnDismiss').style.display = 'none';
+      document.getElementById('detImg').style.display     = 'none';
+      fetch('/api/retry_detection', {{method: 'POST'}}).catch(e => console.warn('retry failed:', e));
+    }}
+
+    function dismissDetection() {{
+      document.getElementById('detPanel').classList.add('hidden');
+    }}
+
     async function doAction(action) {{
       try {{
         await fetch('/api/' + action, {{method: 'POST'}});
@@ -520,7 +655,7 @@ _HTML = f"""<!doctype html>
 
     async function poll() {{
       await fetchStatus();
-      setTimeout(poll, 1500);
+      setTimeout(poll, 500);
     }}
     poll();
   </script>
