@@ -60,6 +60,8 @@ class StatusResponse(BaseModel):
     awaiting_robot_confirmation: bool
     move_history: List[str]
     motor_state: dict
+    ai_name: str = "minimax"
+    ai_difficulty: str = "medium"
 
 
 class RobotMoveResponse(BaseModel):

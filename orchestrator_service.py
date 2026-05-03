@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 from contextlib import asynccontextmanager
+from typing import Optional
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 
 from connect4_robot.config import SERVICES
 from connect4_robot.game_engine import (
     build_orchestrator,
+    build_ai,
+    list_ais,
     ControllerStatus,
     VisionBoardUpdate,
     StatusResponse,
@@ -34,6 +38,10 @@ app = FastAPI(
 )
 
 
+# ---------------------------------------------------------------------------
+# Core
+# ---------------------------------------------------------------------------
+
 @app.get("/health")
 def health():
     return {"ok": True, "service": "connect4-orchestrator"}
@@ -52,7 +60,6 @@ def reset():
 
 @app.post("/pause")
 def pause():
-    """Pause the orchestrator."""
     with orchestrator._lock:
         orchestrator.state.status = ControllerStatus.PAUSED
         orchestrator._append_history("orchestrator paused")
@@ -61,7 +68,6 @@ def pause():
 
 @app.post("/resume")
 def resume():
-    """Resume the orchestrator."""
     with orchestrator._lock:
         restored = (
             ControllerStatus.HUMAN_TURN
@@ -89,6 +95,49 @@ def vision_update(payload: VisionBoardUpdate):
             orchestrator.state.last_error = str(e)
             orchestrator._append_history(f"error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# ---------------------------------------------------------------------------
+# AI management
+# ---------------------------------------------------------------------------
+
+class AISelectRequest(BaseModel):
+    name: str
+    difficulty: Optional[str] = None   # only meaningful for minimax
+
+
+@app.get("/ai")
+def get_ai():
+    """Return the current AI config and the list of all registered AIs."""
+    status = orchestrator.get_status()
+    return {
+        "current": {
+            "name": status.ai_name,
+            "difficulty": status.ai_difficulty or None,
+        },
+        "available": list_ais(),
+        "difficulties": ["easy", "medium", "hard"],
+    }
+
+
+@app.post("/ai")
+def set_ai(req: AISelectRequest):
+    """Hot-swap the robot AI (and optionally its difficulty) without restarting."""
+    params = {}
+    if req.difficulty:
+        params["difficulty"] = req.difficulty
+
+    try:
+        ai = build_ai(req.name, **params)
+    except (KeyError, ValueError) as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    orchestrator.set_policy(ai)
+    return {
+        "ok": True,
+        "ai": req.name,
+        "difficulty": getattr(ai, "difficulty", None),
+    }
 
 
 if __name__ == "__main__":

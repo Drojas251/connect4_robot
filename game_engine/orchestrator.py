@@ -12,6 +12,7 @@ from connect4_robot.motor_control import (
     Connect4Gantry,
 )
 
+from .ai_base import Connect4AI
 from .board import board_from_top_down_strings
 from .messages import (
     ControllerStatus,
@@ -20,15 +21,35 @@ from .messages import (
     StatusResponse,
     RobotMoveResponse,
 )
-from .policy import WeightedRandomPolicy
 
 
 class Connect4Orchestrator:
-    def __init__(self, gantry: Connect4Gantry, policy: WeightedRandomPolicy):
+    def __init__(self, gantry: Connect4Gantry, policy: Connect4AI):
         self.gantry = gantry
         self.policy = policy
+        self._ai_name: str = policy.name
+        self._ai_difficulty: str = getattr(policy, "difficulty", "")
         self.state = OrchestratorState()
         self._lock = threading.RLock()
+
+    # ------------------------------------------------------------------
+    # Policy hot-swap
+    # ------------------------------------------------------------------
+
+    def set_policy(self, ai: Connect4AI) -> None:
+        """Replace the robot AI at runtime (thread-safe)."""
+        with self._lock:
+            self.policy = ai
+            self._ai_name = ai.name
+            self._ai_difficulty = getattr(ai, "difficulty", "")
+            self._append_history(
+                f"AI changed to {ai.name}"
+                + (f" / {ai.difficulty}" if hasattr(ai, "difficulty") else "")
+            )
+
+    # ------------------------------------------------------------------
+    # Status
+    # ------------------------------------------------------------------
 
     def _append_history(self, msg: str):
         self.state.move_history.append(msg)
@@ -49,7 +70,13 @@ class Connect4Orchestrator:
                 awaiting_robot_confirmation=self.state.awaiting_robot_confirmation,
                 move_history=list(self.state.move_history),
                 motor_state=self.gantry.axis.get_state_dict(),
+                ai_name=self._ai_name,
+                ai_difficulty=self._ai_difficulty,
             )
+
+    # ------------------------------------------------------------------
+    # Game control
+    # ------------------------------------------------------------------
 
     def reset(self):
         with self._lock:
@@ -67,10 +94,15 @@ class Connect4Orchestrator:
                 self._append_history("homed gantry on reset")
             except Exception as e:
                 self._append_history(f"homing failed on reset: {e}")
+            self.policy.on_game_reset()
             self.state = OrchestratorState()
             self.state.status = ControllerStatus.HUMAN_TURN
             self.state.board_version = 1
             self._append_history("reset")
+
+    # ------------------------------------------------------------------
+    # Vision update → decide + execute
+    # ------------------------------------------------------------------
 
     def handle_vision_board_update(self, payload: VisionBoardUpdate) -> RobotMoveResponse:
         new_board = board_from_top_down_strings(payload.board)
@@ -136,7 +168,7 @@ class Connect4Orchestrator:
             self.state.status = ControllerStatus.ROBOT_MOVING
             self.state.robot_target_col = decision.column
             self.state.awaiting_robot_confirmation = True
-            self._append_history(f"robot target col {decision.column}")
+            self._append_history(f"robot target col {decision.column} ({decision.reason})")
 
         self.gantry.place_piece(decision.column, timeout=20.0)
 
@@ -159,6 +191,8 @@ class Connect4Orchestrator:
 
 
 def build_orchestrator() -> Connect4Orchestrator:
+    from .ai_minimax import MinimaxAI
+
     transport = MotorTransport(MOTOR.port, MOTOR.baudrate, MOTOR.timeout_s)
     controller = MotorController(transport)
     calibration = LinearAxisCalibration(deg_per_mm=MOTOR.deg_per_mm, deg_offset=MOTOR.deg_offset)
@@ -169,4 +203,4 @@ def build_orchestrator() -> Connect4Orchestrator:
         home_mm=BOARD.home_mm,
         staging_mm=BOARD.staging_mm,
     )
-    return Connect4Orchestrator(gantry=gantry, policy=WeightedRandomPolicy())
+    return Connect4Orchestrator(gantry=gantry, policy=MinimaxAI(difficulty="medium"))

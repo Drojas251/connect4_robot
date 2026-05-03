@@ -155,6 +155,33 @@ def api_reset():
     return {"ok": True, "results": results}
 
 
+@app.get("/api/ai")
+def api_get_ai():
+    try:
+        return requests.get(f"{SERVICES.orchestrator_url}/ai", timeout=3).json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
+class AISelectPayload(BaseModel):
+    name: str
+    difficulty: Optional[str] = None
+
+
+@app.post("/api/ai")
+def api_set_ai(payload: AISelectPayload):
+    try:
+        r = requests.post(
+            f"{SERVICES.orchestrator_url}/ai",
+            json=payload.model_dump(exclude_none=True),
+            timeout=3,
+        )
+        r.raise_for_status()
+        return r.json()
+    except Exception as e:
+        raise HTTPException(status_code=503, detail=str(e))
+
+
 # ---------------------------------------------------------------------------
 # HTML
 # ---------------------------------------------------------------------------
@@ -193,13 +220,31 @@ _HTML = f"""<!doctype html>
     }}
 
     /* ---- Controls ---- */
-    .controls {{ display: flex; gap: 10px; margin-bottom: 16px; flex-wrap: wrap; }}
+    .controls {{ display: flex; gap: 10px; margin-bottom: 10px; flex-wrap: wrap; align-items: center; }}
     button {{ padding: 8px 18px; border: none; border-radius: 8px;
               cursor: pointer; font-size: 0.88rem; font-weight: bold; transition: opacity 0.2s; }}
     button:hover {{ opacity: 0.82; }}
     .btn-pause  {{ background: #7b1fa2; color: #fff; }}
     .btn-resume {{ background: #2e7d32; color: #fff; }}
     .btn-reset  {{ background: #b71c1c; color: #fff; }}
+
+    /* ---- Difficulty selector ---- */
+    .difficulty-row {{ display: flex; align-items: center; gap: 8px; margin-bottom: 16px; flex-wrap: wrap; }}
+    .difficulty-label {{ font-size: 0.8rem; color: #78909c; margin-right: 4px; }}
+    .diff-btn {{
+      padding: 6px 16px; border: 2px solid transparent; border-radius: 20px;
+      cursor: pointer; font-size: 0.82rem; font-weight: bold;
+      background: #1e1e1e; color: #777; transition: all 0.2s;
+    }}
+    .diff-btn:hover {{ color: #ccc; border-color: #555; }}
+    .diff-btn.easy.active   {{ background: #1b5e20; color: #a5d6a7; border-color: #4caf50; }}
+    .diff-btn.medium.active {{ background: #e65100; color: #ffe0b2; border-color: #ff9800; }}
+    .diff-btn.hard.active   {{ background: #b71c1c; color: #ffcdd2; border-color: #f44336; }}
+    .ai-badge {{
+      font-size: 0.75rem; color: #546e7a; background: #1a1a1a;
+      border: 1px solid #2a2a2a; border-radius: 12px; padding: 3px 10px;
+      margin-left: 6px;
+    }}
 
     /* ---- Main layout ---- */
     .main-grid {{ display: grid; grid-template-columns: auto 1fr; gap: 20px; align-items: start; }}
@@ -303,9 +348,79 @@ _HTML = f"""<!doctype html>
 
     .ts {{ color: #444; font-size: 0.72rem; margin-top: 8px; }}
     @media (max-width: 760px) {{ .main-grid {{ grid-template-columns: 1fr; }} }}
+
+    /* ---- Begin-game modal ---- */
+    .modal-overlay {{
+      position: fixed; inset: 0; z-index: 1000;
+      background: rgba(0,0,0,0.88);
+      backdrop-filter: blur(4px);
+      display: flex; align-items: center; justify-content: center;
+    }}
+    .modal-overlay.hidden {{ display: none; }}
+    .modal-card {{
+      background: #12122a; border: 1px solid #2a2a50;
+      border-radius: 20px; padding: 36px 40px;
+      max-width: 460px; width: 92%; text-align: center;
+      box-shadow: 0 24px 80px #0009;
+    }}
+    .modal-logo {{ font-size: 2.6rem; margin-bottom: 4px; }}
+    .modal-title {{ font-size: 1.6rem; font-weight: bold; color: #fff; }}
+    .modal-sub {{ font-size: 0.88rem; color: #546e7a; margin: 6px 0 28px; }}
+    .modal-diff-row {{ display: flex; gap: 12px; justify-content: center; margin-bottom: 28px; }}
+    .modal-diff-card {{
+      flex: 1; max-width: 120px; padding: 14px 10px 12px;
+      border-radius: 12px; border: 2px solid #2a2a2a;
+      background: #1a1a2e; cursor: pointer;
+      transition: border-color 0.2s, background 0.2s, transform 0.15s;
+    }}
+    .modal-diff-card:hover {{ transform: translateY(-2px); }}
+    .modal-diff-card .diff-name {{
+      font-size: 1rem; font-weight: bold; color: #bbb; margin-bottom: 5px;
+    }}
+    .modal-diff-card .diff-desc {{
+      font-size: 0.72rem; color: #546e7a; line-height: 1.35;
+    }}
+    .modal-diff-card.easy.active  {{ border-color: #4caf50; background: #0d2010; }}
+    .modal-diff-card.easy.active  .diff-name {{ color: #a5d6a7; }}
+    .modal-diff-card.medium.active {{ border-color: #ff9800; background: #1f1000; }}
+    .modal-diff-card.medium.active .diff-name {{ color: #ffcc80; }}
+    .modal-diff-card.hard.active  {{ border-color: #f44336; background: #200808; }}
+    .modal-diff-card.hard.active  .diff-name {{ color: #ffcdd2; }}
+    .btn-begin {{
+      width: 100%; padding: 14px; font-size: 1.1rem; font-weight: bold;
+      border: none; border-radius: 10px; cursor: pointer;
+      background: #1565c0; color: #fff;
+      transition: background 0.2s, transform 0.1s;
+    }}
+    .btn-begin:hover {{ background: #1976d2; transform: translateY(-1px); }}
+    .btn-begin:active {{ transform: translateY(0); }}
   </style>
 </head>
 <body>
+
+  <!-- Begin-game modal -->
+  <div id="beginModal" class="modal-overlay">
+    <div class="modal-card">
+      <div class="modal-logo">🤖</div>
+      <div class="modal-title">Connect4 Robot</div>
+      <div class="modal-sub" id="modalSub">Choose a difficulty to begin</div>
+      <div class="modal-diff-row">
+        <div class="modal-diff-card easy" data-diff="easy" onclick="selectModalDiff('easy')">
+          <div class="diff-name">Easy</div>
+          <div class="diff-desc">Occasional blunders — good for learning</div>
+        </div>
+        <div class="modal-diff-card medium active" data-diff="medium" onclick="selectModalDiff('medium')">
+          <div class="diff-name">Medium</div>
+          <div class="diff-desc">Strategic play — solid challenge</div>
+        </div>
+        <div class="modal-diff-card hard" data-diff="hard" onclick="selectModalDiff('hard')">
+          <div class="diff-name">Hard</div>
+          <div class="diff-desc">Near-perfect — good luck!</div>
+        </div>
+      </div>
+      <button class="btn-begin" onclick="startGame()">Begin Game</button>
+    </div>
+  </div>
 
   <div class="header">
     <h1>Connect4 Robot</h1>
@@ -321,7 +436,15 @@ _HTML = f"""<!doctype html>
   <div class="controls">
     <button class="btn-pause"  onclick="doAction('pause')">Pause</button>
     <button class="btn-resume" onclick="doAction('resume')">Resume</button>
-    <button class="btn-reset"  onclick="doAction('reset')">Reset</button>
+    <button class="btn-reset"  onclick="showBeginModal(true)">Reset</button>
+  </div>
+
+  <div class="difficulty-row">
+    <span class="difficulty-label">Robot difficulty:</span>
+    <button class="diff-btn easy"   onclick="setDifficulty('easy')">Easy</button>
+    <button class="diff-btn medium" onclick="setDifficulty('medium')">Medium</button>
+    <button class="diff-btn hard"   onclick="setDifficulty('hard')">Hard</button>
+    <span class="ai-badge" id="aiBadge">minimax / medium</span>
   </div>
 
   <!-- Detection panel -->
@@ -495,6 +618,9 @@ _HTML = f"""<!doctype html>
       let human = 0, robot = 0;
       board.forEach(row => row.forEach(v => {{ if (v==='H') human++; else if (v==='R') robot++; }}));
       const move = (o.board_version ?? 0);
+      const aiLabel = o.ai_name
+        ? (o.ai_difficulty ? `${{o.ai_name}} / ${{o.ai_difficulty}}` : o.ai_name)
+        : null;
       document.getElementById('gameStats').innerHTML = kv([
         ['status',         o.status?.replace(/_/g,' ')],
         ['move #',         move],
@@ -505,6 +631,7 @@ _HTML = f"""<!doctype html>
         ['robot target',   o.robot_target_col],
         ['awaiting confirm', o.awaiting_robot_confirmation ? 'yes' : null],
         ['winner',         o.winner],
+        ['robot ai',       aiLabel],
       ]);
     }}
 
@@ -561,6 +688,7 @@ _HTML = f"""<!doctype html>
         renderBoard(board, o.last_human_col, o.last_robot_col);
 
         if (data.orch_ok && o.status) updateBanner(o);
+        if (data.orch_ok && o.ai_name) updateAIBadge(o);
 
         updateGameStats(o, data.last_vision_update);
         updateMotorState(o.motor_state);
@@ -652,6 +780,92 @@ _HTML = f"""<!doctype html>
         await fetch('/api/' + action, {{method: 'POST'}});
       }} catch(e) {{ alert('Failed: ' + e); }}
     }}
+
+    // ── Difficulty selector ──────────────────────────────────────────
+    let _currentDifficulty = 'medium';
+
+    function updateDifficultyUI(difficulty) {{
+      _currentDifficulty = difficulty || 'medium';
+      document.querySelectorAll('.diff-btn').forEach(btn => {{
+        btn.classList.toggle('active', btn.classList.contains(_currentDifficulty));
+      }});
+    }}
+
+    async function setDifficulty(level) {{
+      updateDifficultyUI(level);  // instant feedback
+      try {{
+        const resp = await fetch('/api/ai', {{
+          method: 'POST',
+          headers: {{'Content-Type': 'application/json'}},
+          body: JSON.stringify({{name: 'minimax', difficulty: level}}),
+        }});
+        if (!resp.ok) console.warn('setDifficulty failed:', await resp.text());
+      }} catch(e) {{ console.warn('setDifficulty error:', e); }}
+    }}
+
+    function updateAIBadge(o) {{
+      const name = o.ai_name || '';
+      const diff = o.ai_difficulty || '';
+      const label = diff ? `${{name}} / ${{diff}}` : name;
+      document.getElementById('aiBadge').textContent = label;
+      if (diff && diff !== _currentDifficulty) updateDifficultyUI(diff);
+    }}
+
+    // ── Begin-game modal ────────────────────────────────────────────
+    let _modalIsReset = false;
+    let _modalDiff = 'medium';
+
+    function showBeginModal(isReset) {{
+      _modalIsReset = isReset;
+      document.getElementById('modalSub').textContent = isReset
+        ? 'Select difficulty — robot will home and board will reset'
+        : 'Choose a difficulty to begin';
+      document.getElementById('beginModal').classList.remove('hidden');
+      selectModalDiff(_currentDifficulty || _modalDiff);
+    }}
+
+    function selectModalDiff(diff) {{
+      _modalDiff = diff;
+      document.querySelectorAll('.modal-diff-card').forEach(card => {{
+        card.classList.toggle('active', card.dataset.diff === diff);
+      }});
+    }}
+
+    async function startGame() {{
+      document.getElementById('beginModal').classList.add('hidden');
+
+      // Set AI difficulty immediately (fire-and-forget)
+      fetch('/api/ai', {{
+        method: 'POST',
+        headers: {{'Content-Type': 'application/json'}},
+        body: JSON.stringify({{name: 'minimax', difficulty: _modalDiff}}),
+      }}).catch(e => console.warn('setAI failed:', e));
+
+      // Update inline difficulty buttons right away
+      updateDifficultyUI(_modalDiff);
+
+      if (_modalIsReset) {{
+        // Full reset: homes robot + clears board state + restarts vision
+        _detReady = false;
+        if (_detDismissTimer) {{ clearTimeout(_detDismissTimer); _detDismissTimer = null; }}
+        const panel = document.getElementById('detPanel');
+        panel.className = 'det-panel searching';
+        panel.classList.remove('hidden');
+        document.getElementById('detIcon').innerHTML    = DET_CFG.searching.icon;
+        document.getElementById('detTitle').textContent = 'Detecting Board';
+        document.getElementById('detMsg').textContent   = 'Resetting and searching for board…';
+        document.getElementById('btnRetry').style.display   = 'none';
+        document.getElementById('btnDismiss').style.display = 'none';
+        document.getElementById('detImg').style.display     = 'none';
+        fetch('/api/reset', {{method: 'POST'}}).catch(e => console.warn('reset failed:', e));
+      }} else {{
+        // Fresh start: just restart vision detection
+        retryDetection();
+      }}
+    }}
+
+    // Show modal on first load
+    showBeginModal(false);
 
     async function poll() {{
       await fetchStatus();
