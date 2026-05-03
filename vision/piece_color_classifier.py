@@ -1,7 +1,10 @@
 import cv2
 import numpy as np
 
-from board import Cell
+try:
+    from .board import Cell
+except ImportError:
+    from board import Cell
 
 
 class PieceColorClassifier:

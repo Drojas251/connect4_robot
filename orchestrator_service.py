@@ -50,6 +50,29 @@ def reset():
     return {"ok": True}
 
 
+@app.post("/pause")
+def pause():
+    """Pause the orchestrator."""
+    with orchestrator._lock:
+        orchestrator.state.status = ControllerStatus.PAUSED
+        orchestrator._append_history("orchestrator paused")
+    return {"ok": True, "status": "paused"}
+
+
+@app.post("/resume")
+def resume():
+    """Resume the orchestrator."""
+    with orchestrator._lock:
+        restored = (
+            ControllerStatus.HUMAN_TURN
+            if orchestrator.state.board_version > 0
+            else ControllerStatus.WAITING_FOR_BOARD
+        )
+        orchestrator.state.status = restored
+        orchestrator._append_history("orchestrator resumed")
+    return {"ok": True, "status": restored.value}
+
+
 @app.post("/vision/update", response_model=RobotMoveResponse)
 def vision_update(payload: VisionBoardUpdate):
     try:

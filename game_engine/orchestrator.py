@@ -78,6 +78,10 @@ class Connect4Orchestrator:
             raise ValueError("Vision board is not physically valid.")
 
         with self._lock:
+            if self.state.status == ControllerStatus.PAUSED:
+                self.state.board = new_board
+                return RobotMoveResponse(accepted=True, reason="paused")
+
             old_board = self.state.board.copy()
 
             if self.state.board_version == 0:

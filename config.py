@@ -15,10 +15,10 @@ class MotorConfig:
 
 @dataclass
 class BoardConfig:
-    rows: int = 6
-    cols: int = 7
+    rows: int = 5
+    cols: int = 5
     column_centers_mm: List[float] = field(
-        default_factory=lambda: [20.0, 58.0, 96.0, 134.0, 172.0, 210.0, 248.0]
+        default_factory=lambda: [20.0, 58.0, 96.0, 134.0, 172.0]
     )
     home_mm: float = 0.0
     staging_mm: float = 10.0
@@ -30,7 +30,11 @@ class ServiceConfig:
     orchestrator_port: int = 8000
     vision_host: str = "0.0.0.0"
     vision_port: int = 8001
+    web_host: str = "0.0.0.0"
+    web_port: int = 8003
     orchestrator_url: str = "http://127.0.0.1:8000"
+    vision_url: str = "http://127.0.0.1:8001"
+    web_url: str = "http://127.0.0.1:8003"
 
 
 @dataclass

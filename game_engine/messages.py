@@ -17,6 +17,7 @@ class ControllerStatus(str, Enum):
     ROBOT_DECIDING = "robot_deciding"
     ROBOT_MOVING = "robot_moving"
     GAME_OVER = "game_over"
+    PAUSED = "paused"
     ERROR = "error"
 
 

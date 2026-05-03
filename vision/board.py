@@ -4,7 +4,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import List, Optional, Tuple
 
-from config import BOARD
+try:
+    from connect4_robot.config import BOARD
+except ImportError:
+    from config import BOARD
 
 
 class Cell(str, Enum):

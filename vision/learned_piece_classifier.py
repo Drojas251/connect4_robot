@@ -2,8 +2,12 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-from board import Cell
-from train_piece_classifier import extract_features
+try:
+    from .board import Cell
+    from .train_piece_classifier import extract_features
+except ImportError:
+    from board import Cell
+    from train_piece_classifier import extract_features
 
 
 class LearnedPieceClassifier:

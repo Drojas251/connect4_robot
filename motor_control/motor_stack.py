@@ -679,8 +679,8 @@ class Connect4Gantry:
         home_mm: Optional[float] = None,
         staging_mm: Optional[float] = None,
     ):
-        if len(column_centers_mm) != 7:
-            raise ValueError("Connect 4 must have exactly 7 columns.")
+        if len(column_centers_mm) < 1:
+            raise ValueError("column_centers_mm must not be empty.")
 
         self.axis = axis
         self.column_centers_mm = column_centers_mm
