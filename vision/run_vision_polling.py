@@ -8,6 +8,12 @@ from board import Connect4Board, Cell
 from roi_dataset_recorder import RoiDatasetRecorder
 from learned_piece_classifier import LearnedPieceClassifier
 
+try:
+    from cnn_piece_classifier import CnnPieceClassifier
+    _CNN_AVAILABLE = True
+except Exception:
+    _CNN_AVAILABLE = False
+
 
 CAMERA_INDEX = 1
 REFRESH_SECONDS = 5
@@ -156,14 +162,23 @@ def main():
     locator = CircleGridLocator()
 
     try:
-        classifier = LearnedPieceClassifier(
+        rf_classifier = LearnedPieceClassifier(
             model_path="vision_piece_dataset/models/piece_random_forest.joblib",
             min_confidence=0.35,
             debug=True,
         )
     except Exception as e:
         print(f"LearnedPieceClassifier unavailable ({e}), falling back to PieceColorClassifier")
-        classifier = PieceColorClassifier()
+        rf_classifier = PieceColorClassifier()
+
+    cnn_classifier = None
+    if _CNN_AVAILABLE:
+        cnn_model_path = "vision_piece_dataset/models/piece_cnn.pt"
+        try:
+            cnn_classifier = CnnPieceClassifier(model_path=cnn_model_path, debug=True)
+            print("CNN classifier loaded — running dual comparison.")
+        except Exception as e:
+            print(f"CNN model not loaded ({e}) — running RF only.")
 
     recorder = RoiDatasetRecorder(
         dataset_dir="vision_piece_dataset",
@@ -200,13 +215,14 @@ def main():
                     break
                 continue
 
+            # RF board (primary — used for recording and move detection)
             board, hole_crops = classify_board_from_fixed_holes(
-                frame, fixed_holes, classifier, hole_crop_radius
+                frame, fixed_holes, rf_classifier, hole_crop_radius
             )
             recorder.save_rois(hole_crops, board, full_frame=frame)
 
             if not board.is_valid_physical_board():
-                print("\nDetected board is not physically valid.")
+                print("\n[RF] Board not physically valid.")
                 print(board.pretty())
             else:
                 if current_board is not None:
@@ -214,18 +230,28 @@ def main():
                     if move is not None:
                         row, col, piece = move
                         print(f"\nNew move detected: row={row}, col={col}, piece={piece.value}")
-
                 current_board = board
-                print("\nDetected board:")
+                print("\n[RF] Board:")
                 print(current_board.pretty())
 
             overlay = draw_fixed_hole_overlay(
                 frame, fixed_holes, fixed_bbox, hole_crop_radius, board
             )
-            crop_grid = make_debug_crop_grid(hole_crops)
-
             cv2.imshow("Fixed Hole Classification Overlay", overlay)
-            cv2.imshow("Classifier Circle Crops", crop_grid)
+            cv2.imshow("RF Crops", make_debug_crop_grid(hole_crops))
+
+            # CNN board (comparison only — not used for recording)
+            if cnn_classifier is not None:
+                cnn_board, cnn_crops = classify_board_from_fixed_holes(
+                    frame, fixed_holes, cnn_classifier, hole_crop_radius
+                )
+                if cnn_board.is_valid_physical_board():
+                    print("\n[CNN] Board:")
+                    print(cnn_board.pretty())
+                else:
+                    print("\n[CNN] Board not physically valid.")
+                    print(cnn_board.pretty())
+                cv2.imshow("CNN Crops", make_debug_crop_grid(cnn_crops))
 
             if not wait_with_window_updates_and_drain(cap, REFRESH_SECONDS):
                 break
