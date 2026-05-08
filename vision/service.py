@@ -4,11 +4,11 @@ Publishes board updates to orchestrator and web UI.
 
 Startup sequence
 ----------------
-1. searching        – scanning frames for AprilTag corners
-2. checking         – corners found; classifying cells to verify board is empty
+1. searching        – running KF grid detector until all 42 slots settle
+2. checking         – grid locked; classifying cells to verify board is empty
 3. board_not_empty  – pieces detected; waiting for user to clear & retry
-4. detection_failed – corners never found; waiting for retry
-5. ready            – board empty, corners locked; main polling loop running
+4. detection_failed – grid never settled; waiting for retry
+5. ready            – board empty, grid locked; main polling loop running
 """
 from __future__ import annotations
 
@@ -28,11 +28,11 @@ from connect4_robot.config import SERVICES
 from connect4_robot.game_engine.board import Connect4Board, Cell
 
 try:
-    from .connect4_tag_grid import Connect4TagGridDetector
+    from .circle_grid_locator import CircleGridLocator
     from .piece_color_classifier import PieceColorClassifier
     from .learned_piece_classifier import LearnedPieceClassifier
 except ImportError:
-    from connect4_tag_grid import Connect4TagGridDetector
+    from circle_grid_locator import CircleGridLocator
     from piece_color_classifier import PieceColorClassifier
     from learned_piece_classifier import LearnedPieceClassifier
 
@@ -40,7 +40,6 @@ except ImportError:
 CAMERA_INDEX = 1
 MAX_GRID_SEARCH_FRAMES = 300
 REFRESH_SECONDS = 5
-HOLE_CROP_RADIUS = 18
 POLL_PERIOD_S = 0.1
 
 
@@ -138,10 +137,10 @@ def circular_crop(frame, center_xy, radius):
     return cv2.bitwise_and(patch, patch, mask=mask)
 
 
-def classify_board(frame, holes, classifier) -> Connect4Board:
+def classify_board(frame, holes, hole_crop_radius, classifier) -> Connect4Board:
     board = Connect4Board.empty()
     for hole in holes:
-        crop = circular_crop(frame, hole.frame_xy, HOLE_CROP_RADIUS)
+        crop = circular_crop(frame, hole.frame_xy, hole_crop_radius)
         board.grid[hole.row][hole.col] = (
             classifier.classify(crop) if crop is not None else Cell.EMPTY
         )
@@ -156,7 +155,7 @@ def board_is_empty(board: Connect4Board) -> bool:
     )
 
 
-def render_detection_image(frame, holes, bbox_xyxy, board: Optional[Connect4Board] = None) -> bytes:
+def render_detection_image(frame, holes, bbox_xyxy, hole_crop_radius, board: Optional[Connect4Board] = None) -> bytes:
     """Draw the detected grid overlay and return JPEG bytes."""
     img = frame.copy()
     x0, y0, x1, y1 = bbox_xyxy
@@ -165,13 +164,13 @@ def render_detection_image(frame, holes, bbox_xyxy, board: Optional[Connect4Boar
     for hole in holes:
         cell = board.grid[hole.row][hole.col] if board else None
         if cell == Cell.HUMAN:
-            color = (40, 210, 210)   # yellow (BGR)
+            color = (40, 210, 210)
         elif cell == Cell.ROBOT:
-            color = (50, 50, 220)    # red (BGR)
+            color = (50, 50, 220)
         else:
-            color = (180, 180, 180)  # grey for empty / unknown
+            color = (180, 180, 180)
 
-        cv2.circle(img, hole.frame_xy, HOLE_CROP_RADIUS, color, 2)
+        cv2.circle(img, hole.frame_xy, hole_crop_radius, color, 2)
         cv2.circle(img, hole.frame_xy, 4, color, -1)
         cv2.putText(
             img,
@@ -184,25 +183,13 @@ def render_detection_image(frame, holes, bbox_xyxy, board: Optional[Connect4Boar
     return bytes(buf) if ok else b""
 
 
-def find_grid(cap, detector, max_frames=MAX_GRID_SEARCH_FRAMES):
-    """Scan frames until AprilTag grid is found.
-    Exits early if vision_state.restart_requested is set.
-    Always returns (result_or_None, last_frame_or_None)."""
-    last_frame = None
-    for i in range(max_frames):
-        if not vision_state.is_running or vision_state.restart_requested:
-            return None, last_frame
-        ret, frame = cap.read()
-        if not ret:
-            continue
-        last_frame = frame
-        result = detector.detect_from_frame(frame)
-        if result is not None and len(result.holes) > 0:
-            print(f"[vision] Grid found on frame {i} ({len(result.holes)} holes)")
-            return result, frame
-        if i % 30 == 0 and i > 0:
-            print(f"[vision] Searching… frame {i}")
-    return None, last_frame
+def find_grid(cap, locator: CircleGridLocator):
+    """Run the KF locator until the grid settles or restart is requested."""
+    return locator.find_grid(
+        cap,
+        max_frames=MAX_GRID_SEARCH_FRAMES,
+        running_fn=lambda: vision_state.is_running and not vision_state.restart_requested,
+    )
 
 
 def publish_board_state(board: Connect4Board):
@@ -226,7 +213,7 @@ def _wait_for_restart():
         time.sleep(0.4)
 
 
-def vision_polling_loop(grid_detector, classifier):
+def vision_polling_loop(locator: CircleGridLocator, classifier):
     cap = cv2.VideoCapture(CAMERA_INDEX)
     if not cap.isOpened():
         vision_state.set_detection("detection_failed", f"Cannot open camera {CAMERA_INDEX}")
@@ -236,26 +223,23 @@ def vision_polling_loop(grid_detector, classifier):
         while vision_state.is_running:
             vision_state.restart_requested = False
 
-            # ── Phase 1: find AprilTag grid ───────────────────────────────
-            vision_state.set_detection("searching", "Searching for board corners…")
-            grid_result, grid_frame = find_grid(cap, grid_detector)
+            # ── Phase 1: run KF until grid settles ───────────────────────
+            vision_state.set_detection("searching", "Searching for circle grid…")
+            holes, bbox, grid_frame, mean_r = find_grid(cap, locator)
+            hole_crop_radius = max(14, int(mean_r * 0.8))
 
-            if grid_result is None:
-                # Store raw camera view so the user can see what the robot sees
+            if not holes:
                 if grid_frame is not None:
                     ok, buf = cv2.imencode(".jpg", grid_frame, [cv2.IMWRITE_JPEG_QUALITY, 75])
                     if ok:
                         vision_state.set_detection_image(bytes(buf))
                 vision_state.set_detection(
                     "detection_failed",
-                    "Board corners not detected. "
-                    "Run 'python -m connect4_robot.vision.detect_board_corners' to debug.",
+                    "Circle grid not detected. Check camera and blue board visibility.",
                 )
                 _wait_for_restart()
                 continue
 
-            holes = grid_result.holes
-            bbox  = grid_result.bbox_xyxy
             vision_state.detected_holes_count = len(holes)
 
             # ── Phase 2: classify & verify empty ─────────────────────────
@@ -270,8 +254,8 @@ def vision_polling_loop(grid_detector, classifier):
                 _wait_for_restart()
                 continue
 
-            board = classify_board(frame, holes, classifier)
-            vision_state.set_detection_image(render_detection_image(frame, holes, bbox, board))
+            board = classify_board(frame, holes, hole_crop_radius, classifier)
+            vision_state.set_detection_image(render_detection_image(frame, holes, bbox, hole_crop_radius, board))
 
             if not board_is_empty(board):
                 occupied = sum(
@@ -288,7 +272,7 @@ def vision_polling_loop(grid_detector, classifier):
             # ── Phase 3: ready ────────────────────────────────────────────
             ret2, frame2 = cap.read()
             if ret2:
-                vision_state.set_detection_image(render_detection_image(frame2, holes, bbox))
+                vision_state.set_detection_image(render_detection_image(frame2, holes, bbox, hole_crop_radius))
 
             vision_state.set_detection("ready", "Board detected and empty — game ready!")
             vision_state.update_board(Connect4Board.empty())
@@ -307,7 +291,7 @@ def vision_polling_loop(grid_detector, classifier):
                     continue
 
                 vision_state.frame_count += 1
-                board = classify_board(frame, holes, classifier)
+                board = classify_board(frame, holes, hole_crop_radius, classifier)
                 vision_state.update_board(board)
 
                 now = time.time()
@@ -339,7 +323,7 @@ vision_thread = None
 async def lifespan(app: FastAPI):
     global vision_thread
     try:
-        grid_detector = Connect4TagGridDetector()
+        locator = CircleGridLocator()
         try:
             classifier = LearnedPieceClassifier()
             print("[vision] Using LearnedPieceClassifier")
@@ -350,7 +334,7 @@ async def lifespan(app: FastAPI):
         vision_state.is_running = True
         vision_thread = threading.Thread(
             target=vision_polling_loop,
-            args=(grid_detector, classifier),
+            args=(locator, classifier),
             daemon=True,
         )
         vision_thread.start()
