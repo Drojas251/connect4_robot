@@ -8,36 +8,25 @@ except ImportError:
 
 
 class PieceColorClassifier:
+    """
+    Classifies holes by the sticker color on each piece:
+      Robot  → teal/cyan sticker  (H 85-108, S≥90, V≥70)
+      Human  → pink/magenta sticker (H 140-179, S≥80, V≥70)
+      Empty  → neither sticker present
+    """
+
     def __init__(
         self,
-        # --- Red (robot) ---
-        red_min_fraction: float = 0.25,
-        red_min_abs_pixels: int = 120,
-        red_min_saturation: int = 130,
-        red_min_value: int = 90,
-        red_dominance_ratio: float = 2.0,
-
-        # --- Yellow (human) ---
-        yellow_min_fraction: float = 0.12,
-        yellow_min_abs_pixels: int = 80,
-        yellow_min_saturation: int = 80,
-        yellow_min_value: int = 80,
-        yellow_dominance_ratio: float = 1.3,
-
+        teal_min_fraction: float = 0.04,
+        teal_min_pixels: int = 30,
+        pink_min_fraction: float = 0.06,
+        pink_min_pixels: int = 40,
         debug: bool = False,
     ):
-        self.red_min_fraction = red_min_fraction
-        self.red_min_abs_pixels = red_min_abs_pixels
-        self.red_min_saturation = red_min_saturation
-        self.red_min_value = red_min_value
-        self.red_dominance_ratio = red_dominance_ratio
-
-        self.yellow_min_fraction = yellow_min_fraction
-        self.yellow_min_abs_pixels = yellow_min_abs_pixels
-        self.yellow_min_saturation = yellow_min_saturation
-        self.yellow_min_value = yellow_min_value
-        self.yellow_dominance_ratio = yellow_dominance_ratio
-
+        self.teal_min_fraction = teal_min_fraction
+        self.teal_min_pixels   = teal_min_pixels
+        self.pink_min_fraction = pink_min_fraction
+        self.pink_min_pixels   = pink_min_pixels
         self.debug = debug
 
     def classify(self, circle_bgr: np.ndarray) -> Cell:
@@ -45,67 +34,30 @@ class PieceColorClassifier:
             return Cell.EMPTY
 
         hsv = cv2.cvtColor(circle_bgr, cv2.COLOR_BGR2HSV)
-        h, s, v = cv2.split(hsv)
+        h, s, v = hsv[:, :, 0], hsv[:, :, 1], hsv[:, :, 2]
 
-        # Ignore black pixels from circular mask
-        crop_mask = np.any(circle_bgr > 10, axis=2)
-        total_pixels = np.count_nonzero(crop_mask)
-
-        if total_pixels == 0:
+        # Ignore black pixels from the circular crop mask
+        valid = np.any(circle_bgr > 15, axis=2)
+        total = int(valid.sum())
+        if total == 0:
             return Cell.EMPTY
 
-        # --- Valid masks ---
-        red_valid = (
-            crop_mask &
-            (s >= self.red_min_saturation) &
-            (v >= self.red_min_value)
-        )
+        teal = valid & (h >= 85) & (h <= 108) & (s >= 90) & (v >= 70)
+        pink = valid & (h >= 140) & (h <= 179) & (s >= 80) & (v >= 70)
 
-        yellow_valid = (
-            crop_mask &
-            (s >= self.yellow_min_saturation) &
-            (v >= self.yellow_min_value)
-        )
-
-        # --- RED (tight, avoid false positives) ---
-        red_mask_1 = (h >= 0) & (h <= 7)
-        red_mask_2 = (h >= 173) & (h <= 179)
-        red_mask = red_valid & (red_mask_1 | red_mask_2)
-
-        # --- YELLOW (wider + more forgiving) ---
-        # This is the KEY FIX for your issue
-        yellow_mask = yellow_valid & (h >= 14) & (h <= 42)
-
-        red_pixels = np.count_nonzero(red_mask)
-        yellow_pixels = np.count_nonzero(yellow_mask)
-
-        red_fraction = red_pixels / total_pixels
-        yellow_fraction = yellow_pixels / total_pixels
-
-        # --- Decision logic ---
-        red_is_strong = (
-            red_pixels >= self.red_min_abs_pixels and
-            red_fraction >= self.red_min_fraction and
-            red_pixels >= self.red_dominance_ratio * max(1, yellow_pixels)
-        )
-
-        yellow_is_strong = (
-            yellow_pixels >= self.yellow_min_abs_pixels and
-            yellow_fraction >= self.yellow_min_fraction and
-            yellow_pixels >= self.yellow_dominance_ratio * max(1, red_pixels)
-        )
+        n_teal = int(teal.sum())
+        n_pink = int(pink.sum())
+        f_teal = n_teal / total
+        f_pink = n_pink / total
 
         if self.debug:
-            print(
-                f"[Classifier] total={total_pixels} | "
-                f"R: px={red_pixels}, frac={red_fraction:.2f} | "
-                f"Y: px={yellow_pixels}, frac={yellow_fraction:.2f}"
-            )
+            print(f"[Classifier] total={total} teal={n_teal}({f_teal:.3f}) pink={n_pink}({f_pink:.3f})")
 
-        if red_is_strong:
-            return Cell.ROBOT
+        if n_teal >= self.teal_min_pixels and f_teal >= self.teal_min_fraction:
+            if n_teal >= n_pink:
+                return Cell.ROBOT
 
-        if yellow_is_strong:
+        if n_pink >= self.pink_min_pixels and f_pink >= self.pink_min_fraction:
             return Cell.HUMAN
 
         return Cell.EMPTY
