@@ -57,7 +57,9 @@ ROW_TOL = 22
 COL_TOL = 28
 
 # Kalman filter
-KF_Q    = 0.5     # process noise variance per frame (board is static; small)
+KF_Q         = 0.5    # process noise variance per frame while converging
+KF_Q_SETTLED = 0.005  # process noise once a slot has settled — nearly frozen
+KF_SETTLE_STD = 2.0   # std_px threshold to declare a slot settled (px)
 KF_R_DIRECT  = 4.0    # measurement variance for a direct HoughCircles hit (~2 px std)
 KF_R_INFERRED = 400.0 # measurement variance for a grid-interpolated position (~20 px std)
 KF_INIT_COV  = 400.0  # initial P for a brand-new slot
@@ -77,9 +79,12 @@ class _HoleKF:
         self.x = np.array(pos, dtype=float)
         # Start confident if directly detected, uncertain if interpolated
         self.P = np.eye(2) * (KF_R_DIRECT if direct else KF_INIT_COV)
+        self._settled = False
 
     def predict(self):
-        self.P += KF_Q * np.eye(2)
+        # Once settled, inject almost no process noise — board doesn't move.
+        q = KF_Q_SETTLED if self._settled else KF_Q
+        self.P += q * np.eye(2)
 
     def update(self, z: tuple[float, float], direct: bool,
                expected: Optional[tuple[float, float]] = None):
@@ -101,6 +106,9 @@ class _HoleKF:
         K = self.P @ np.linalg.inv(self.P + R * np.eye(2))
         self.x = self.x + K @ (np.asarray(z, float) - self.x)
         self.P = (np.eye(2) - K) @ self.P
+        # Mark settled once uncertainty is small — future process noise is minimal.
+        if not self._settled and self.std_px < KF_SETTLE_STD:
+            self._settled = True
 
     @property
     def pos_int(self) -> tuple[int, int]:
