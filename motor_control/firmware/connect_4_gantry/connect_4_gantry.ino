@@ -15,9 +15,9 @@ EndEffector endEffector(firstSolenoid, secondSolenoid);
 // =======================
 // PIN CONFIG
 // =======================
-constexpr uint8_t STEP_PIN = 3;
+constexpr uint8_t STEP_PIN = 5;
 constexpr uint8_t DIR_PIN  = 4;
-constexpr uint8_t EN_PIN   = 5;
+constexpr uint8_t EN_PIN   = 3;
 
 // Limit switch: normally HIGH, active LOW
 constexpr uint8_t HOME_LIMIT_PIN = 7;

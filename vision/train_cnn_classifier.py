@@ -28,7 +28,7 @@ MODEL_PATH  = MODEL_DIR / "piece_cnn.pt"
 LABELS     = {"empty": 0, "yellow": 1, "red": 2}
 ID_TO_LABEL = {0: "empty", 1: "yellow", 2: "red"}
 
-EPOCHS     = 50
+EPOCHS     = 100
 BATCH_SIZE = 64
 LR         = 1e-3
 SEED       = 42
