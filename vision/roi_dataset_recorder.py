@@ -12,11 +12,13 @@ class RoiDatasetRecorder:
     ):
         self.dataset_dir = Path(dataset_dir)
         self.unlabeled_dir = self.dataset_dir / "unlabeled"
+        self.frames_dir = self.dataset_dir / "frames"
         self.save_every_roi = save_every_roi
         self.save_on_state_change = save_on_state_change
         self.last_board_signature = None
 
         self.unlabeled_dir.mkdir(parents=True, exist_ok=True)
+        self.frames_dir.mkdir(parents=True, exist_ok=True)
 
     def board_signature(self, board):
         return tuple(tuple(cell.value for cell in row) for row in board.grid)
@@ -36,7 +38,7 @@ class RoiDatasetRecorder:
 
         return False
 
-    def save_rois(self, hole_crops, board=None):
+    def save_rois(self, hole_crops, board=None, full_frame=None):
         if board is not None and not self.should_save(board):
             return
 
@@ -49,5 +51,9 @@ class RoiDatasetRecorder:
             filename = f"{ts}_r{row}_c{col}_pred_{predicted_label}.png"
             out_path = self.unlabeled_dir / filename
             cv2.imwrite(str(out_path), crop)
+
+        if full_frame is not None:
+            frame_path = self.frames_dir / f"{ts}.jpg"
+            cv2.imwrite(str(frame_path), full_frame, [cv2.IMWRITE_JPEG_QUALITY, 85])
 
         print(f"Saved ROI crops to {self.unlabeled_dir}")

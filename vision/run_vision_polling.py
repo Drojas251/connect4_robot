@@ -203,7 +203,7 @@ def main():
             board, hole_crops = classify_board_from_fixed_holes(
                 frame, fixed_holes, classifier, hole_crop_radius
             )
-            recorder.save_rois(hole_crops, board)
+            recorder.save_rois(hole_crops, board, full_frame=frame)
 
             if not board.is_valid_physical_board():
                 print("\nDetected board is not physically valid.")
