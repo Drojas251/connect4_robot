@@ -79,16 +79,23 @@ class CircleGridLocator:
         self.last_gp = gp
         return kf_output, bbox, gp
 
-    def all_settled(self, kf_output: dict) -> bool:
-        """True when all expected slots have been seen and their KF converged."""
-        if len(kf_output) < EXPECTED_ROWS * EXPECTED_COLS:
-            return False
-        return all(std < KF_SETTLE_STD for _, std in kf_output.values())
+    # Number of consecutive full-grid frames required before declaring settled.
+    # Slots that are never directly hit by Hough receive only inferred updates
+    # (R=400), so their KF std never drops below KF_SETTLE_STD.  Tracking
+    # consecutive valid frames instead avoids that dead-end.
+    SETTLE_FRAMES = 30
+
+    def _grid_ready(self, kf_output: dict, gp) -> bool:
+        """True when all 42 slots are populated and the grid geometry is present."""
+        return (
+            gp is not None
+            and len(kf_output) >= EXPECTED_ROWS * EXPECTED_COLS
+        )
 
     def find_grid(
         self,
         cap: cv2.VideoCapture,
-        max_frames: int = 300,
+        max_frames: int = 400,
         running_fn=None,
     ) -> tuple[list[Hole], tuple, Optional[np.ndarray], float]:
         """
@@ -99,7 +106,13 @@ class CircleGridLocator:
         Returns (holes, bbox_xyxy, last_frame, mean_r).
         holes is empty if the grid was never found.
         """
+        # Match the resolution used by detect_circle_grid so Hough parameters work.
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
         last_frame = None
+        consecutive_valid = 0
+
         for i in range(max_frames):
             if running_fn is not None and not running_fn():
                 break
@@ -110,18 +123,23 @@ class CircleGridLocator:
 
             kf_output, bbox, gp = self.process_frame(frame)
 
+            if self._grid_ready(kf_output, gp):
+                consecutive_valid += 1
+            else:
+                consecutive_valid = 0
+
             if i % 30 == 0:
                 print(
                     f"[CircleGridLocator] frame {i}: "
                     f"{len(kf_output)}/{EXPECTED_ROWS * EXPECTED_COLS} slots, "
-                    f"settled={self.all_settled(kf_output)}"
+                    f"consecutive_valid={consecutive_valid}/{self.SETTLE_FRAMES}"
                 )
 
-            if bbox is not None and self.all_settled(kf_output):
+            if consecutive_valid >= self.SETTLE_FRAMES:
                 print(f"[CircleGridLocator] Grid settled after {i} frames")
                 holes = self._build_holes(kf_output)
                 bx, by, bw, bh = bbox
-                mean_r = float(gp["mean_r"]) if gp else 30.0
+                mean_r = float(gp["mean_r"])
                 return holes, (bx, by, bx + bw, by + bh), last_frame, mean_r
 
         print(f"[CircleGridLocator] Grid not settled after {max_frames} frames")
