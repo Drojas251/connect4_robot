@@ -31,10 +31,12 @@ try:
     from .circle_grid_locator import CircleGridLocator
     from .piece_color_classifier import PieceColorClassifier
     from .learned_piece_classifier import LearnedPieceClassifier
+    from .cnn_piece_classifier import CnnPieceClassifier
 except ImportError:
     from circle_grid_locator import CircleGridLocator
     from piece_color_classifier import PieceColorClassifier
     from learned_piece_classifier import LearnedPieceClassifier
+    from cnn_piece_classifier import CnnPieceClassifier
 
 
 CAMERA_INDEX = 1
@@ -337,12 +339,19 @@ async def lifespan(app: FastAPI):
     global vision_thread
     try:
         locator = CircleGridLocator()
+        classifier = None
         try:
-            classifier = LearnedPieceClassifier()
-            print("[vision] Using LearnedPieceClassifier")
+            classifier = CnnPieceClassifier()
+            print("[vision] Using CnnPieceClassifier")
         except Exception as e:
-            print(f"[vision] LearnedPieceClassifier unavailable ({e}), using PieceColorClassifier")
-            classifier = PieceColorClassifier()
+            print(f"[vision] CnnPieceClassifier unavailable ({e})")
+        if classifier is None:
+            try:
+                classifier = LearnedPieceClassifier()
+                print("[vision] Using LearnedPieceClassifier")
+            except Exception as e:
+                print(f"[vision] LearnedPieceClassifier unavailable ({e}), using PieceColorClassifier")
+                classifier = PieceColorClassifier()
 
         vision_state.is_running = True
         vision_thread = threading.Thread(

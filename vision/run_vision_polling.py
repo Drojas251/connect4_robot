@@ -161,24 +161,41 @@ def main():
 
     locator = CircleGridLocator()
 
-    try:
-        rf_classifier = LearnedPieceClassifier(
-            model_path="vision_piece_dataset/models/piece_random_forest.joblib",
-            min_confidence=0.35,
-            debug=True,
-        )
-    except Exception as e:
-        print(f"LearnedPieceClassifier unavailable ({e}), falling back to PieceColorClassifier")
-        rf_classifier = PieceColorClassifier()
-
-    cnn_classifier = None
+    # CNN is primary; RF runs as comparison if both models exist.
+    primary_classifier = None
     if _CNN_AVAILABLE:
-        cnn_model_path = "vision_piece_dataset/models/piece_cnn.pt"
         try:
-            cnn_classifier = CnnPieceClassifier(model_path=cnn_model_path, debug=True)
-            print("CNN classifier loaded — running dual comparison.")
+            primary_classifier = CnnPieceClassifier(
+                model_path="vision_piece_dataset/models/piece_cnn.pt",
+                debug=True,
+            )
+            print("Primary classifier: CNN")
         except Exception as e:
-            print(f"CNN model not loaded ({e}) — running RF only.")
+            print(f"CNN model not loaded ({e})")
+
+    if primary_classifier is None:
+        try:
+            primary_classifier = LearnedPieceClassifier(
+                model_path="vision_piece_dataset/models/piece_random_forest.joblib",
+                min_confidence=0.35,
+                debug=True,
+            )
+            print("Primary classifier: Random Forest")
+        except Exception as e:
+            print(f"LearnedPieceClassifier unavailable ({e}), falling back to PieceColorClassifier")
+            primary_classifier = PieceColorClassifier()
+
+    rf_classifier = None
+    if _CNN_AVAILABLE and isinstance(primary_classifier, CnnPieceClassifier):
+        try:
+            rf_classifier = LearnedPieceClassifier(
+                model_path="vision_piece_dataset/models/piece_random_forest.joblib",
+                min_confidence=0.35,
+                debug=False,   # quieter — CNN is primary
+            )
+            print("Comparison classifier: Random Forest")
+        except Exception:
+            pass
 
     recorder = RoiDatasetRecorder(
         dataset_dir="vision_piece_dataset",
@@ -215,14 +232,15 @@ def main():
                     break
                 continue
 
-            # RF board (primary — used for recording and move detection)
+            # Primary board (CNN when available) — drives recording and move detection
+            clf_name = type(primary_classifier).__name__.replace("PieceClassifier", "")
             board, hole_crops = classify_board_from_fixed_holes(
-                frame, fixed_holes, rf_classifier, hole_crop_radius
+                frame, fixed_holes, primary_classifier, hole_crop_radius
             )
             recorder.save_rois(hole_crops, board, full_frame=frame)
 
             if not board.is_valid_physical_board():
-                print("\n[RF] Board not physically valid.")
+                print(f"\n[{clf_name}] Board not physically valid.")
                 print(board.pretty())
             else:
                 if current_board is not None:
@@ -231,27 +249,27 @@ def main():
                         row, col, piece = move
                         print(f"\nNew move detected: row={row}, col={col}, piece={piece.value}")
                 current_board = board
-                print("\n[RF] Board:")
+                print(f"\n[{clf_name}] Board:")
                 print(current_board.pretty())
 
             overlay = draw_fixed_hole_overlay(
                 frame, fixed_holes, fixed_bbox, hole_crop_radius, board
             )
             cv2.imshow("Fixed Hole Classification Overlay", overlay)
-            cv2.imshow("RF Crops", make_debug_crop_grid(hole_crops))
+            cv2.imshow(f"{clf_name} Crops", make_debug_crop_grid(hole_crops))
 
-            # CNN board (comparison only — not used for recording)
-            if cnn_classifier is not None:
-                cnn_board, cnn_crops = classify_board_from_fixed_holes(
-                    frame, fixed_holes, cnn_classifier, hole_crop_radius
+            # RF comparison (quiet — no debug prints)
+            if rf_classifier is not None:
+                rf_board, rf_crops = classify_board_from_fixed_holes(
+                    frame, fixed_holes, rf_classifier, hole_crop_radius
                 )
-                if cnn_board.is_valid_physical_board():
-                    print("\n[CNN] Board:")
-                    print(cnn_board.pretty())
+                if rf_board.is_valid_physical_board():
+                    print("\n[RF] Board:")
+                    print(rf_board.pretty())
                 else:
-                    print("\n[CNN] Board not physically valid.")
-                    print(cnn_board.pretty())
-                cv2.imshow("CNN Crops", make_debug_crop_grid(cnn_crops))
+                    print("\n[RF] Board not physically valid.")
+                    print(rf_board.pretty())
+                cv2.imshow("RF Crops", make_debug_crop_grid(rf_crops))
 
             if not wait_with_window_updates_and_drain(cap, REFRESH_SECONDS):
                 break
