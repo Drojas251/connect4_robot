@@ -63,6 +63,13 @@ def extract_features(bgr):
     features.extend(s_hist.tolist())
     features.extend(v_hist.tolist())
 
+    # Explicit sticker-color fractions — the primary discriminating signal
+    total = float(np.count_nonzero(mask))
+    teal = mask & (hsv[:, :, 0] >= 85) & (hsv[:, :, 0] <= 108) & (hsv[:, :, 1] >= 90) & (hsv[:, :, 2] >= 70)
+    pink = mask & (hsv[:, :, 0] >= 140) & (hsv[:, :, 0] <= 179) & (hsv[:, :, 1] >= 80) & (hsv[:, :, 2] >= 70)
+    features.append(float(teal.sum()) / max(total, 1))
+    features.append(float(pink.sum()) / max(total, 1))
+
     return np.array(features, dtype=np.float32)
 
 

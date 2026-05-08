@@ -14,7 +14,7 @@ class LearnedPieceClassifier:
     def __init__(
         self,
         model_path="vision_piece_dataset/models/piece_random_forest.joblib",
-        min_confidence=0.55,
+        min_confidence=0.35,
         debug=True,
     ):
         self.model_path = Path(model_path)

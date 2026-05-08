@@ -158,7 +158,7 @@ def main():
     try:
         classifier = LearnedPieceClassifier(
             model_path="vision_piece_dataset/models/piece_random_forest.joblib",
-            min_confidence=0.55,
+            min_confidence=0.35,
             debug=True,
         )
     except Exception as e:
