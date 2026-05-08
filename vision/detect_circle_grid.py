@@ -376,19 +376,20 @@ def draw_main_overlay(
 
     mean_r = int(round(grid_params["mean_r"])) if grid_params else 30
 
-    # KF-smoothed positions
+    # KF-smoothed positions: ring outline + small filled centre dot
     for (ri, ci), (pos, std) in kf_output.items():
         cx, cy = pos
         direct = (ri, ci) in direct_slots
         color  = _GREEN if direct else _ORANGE
         thick  = 2     if direct else 1
         cv2.circle(vis, (cx, cy), mean_r, color, thick)
+        cv2.circle(vis, (cx, cy), 4, color, -1)
         cv2.putText(vis, f"{ri},{ci}", (cx - 13, cy + 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.3, color, 1)
 
-    # Raw HoughCircles — small cyan filled dot to distinguish from KF ring
+    # Raw HoughCircles — tiny cyan dot so the raw measurement is still visible
     for cx, cy, r in circles:
-        cv2.circle(vis, (cx, cy), 5, _CYAN, -1)
+        cv2.circle(vis, (int(cx), int(cy)), 3, _CYAN, -1)
 
     # Stats banner
     n_direct  = len(direct_slots)
