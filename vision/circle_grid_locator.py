@@ -28,6 +28,7 @@ try:
         KF_SETTLE_STD,
         EXPECTED_ROWS,
         EXPECTED_COLS,
+        GRID_GATE_R,
     )
 except ImportError:
     from detect_circle_grid import (
@@ -40,6 +41,7 @@ except ImportError:
         KF_SETTLE_STD,
         EXPECTED_ROWS,
         EXPECTED_COLS,
+        GRID_GATE_R,
     )
 
 

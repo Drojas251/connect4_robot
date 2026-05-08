@@ -67,6 +67,11 @@ KF_INIT_COV  = 400.0  # initial P for a brand-new slot
 # have their R scaled up as R_DIRECT * (dist/KF_GATE_R)^2, capped at R_INFERRED.
 # Set equal to ~half a grid step so a one-slot Hough error gets heavily discounted.
 KF_GATE_R = 20.0
+# Hard grid gate: Hough detections more than this many px from the expected grid
+# centre are dropped from direct assignments and replaced by the inferred grid
+# position.  This prevents piece edges (which appear ~20px off-centre) from ever
+# anchoring the KF at the wrong position.
+GRID_GATE_R = 15.0
 # ──────────────────────────────────────────────────────────────────────────
 
 
@@ -335,18 +340,27 @@ def build_measurements(
     Build the full per-slot measurement dict for the KF.
     Direct HoughCircles detections → is_direct=True.
     Grid-interpolated fill-ins       → is_direct=False.
+
+    Hough detections more than GRID_GATE_R px from the expected grid centre are
+    dropped — they are almost certainly piece edges, not hole centres.  The slot
+    then falls through to the inferred grid position below.
     """
     meas: dict[tuple[int, int], tuple[tuple[float, float], bool]] = {}
 
-    # Direct detections take priority
+    expected = all_expected_centers(grid_params) if grid_params else {}
+
     for idx, (ri, ci) in assignments.items():
-        meas[(ri, ci)] = ((float(circles[idx, 0]), float(circles[idx, 1])), True)
+        cx, cy = float(circles[idx, 0]), float(circles[idx, 1])
+        if (ri, ci) in expected:
+            ex, ey = expected[(ri, ci)]
+            if ((cx - ex) ** 2 + (cy - ey) ** 2) ** 0.5 > GRID_GATE_R:
+                continue  # too far off-grid — treat as inferred below
+        meas[(ri, ci)] = ((cx, cy), True)
 
     # Fill remaining slots from grid estimate
-    if grid_params is not None:
-        for (ri, ci), (ex, ey) in all_expected_centers(grid_params).items():
-            if (ri, ci) not in meas:
-                meas[(ri, ci)] = ((float(ex), float(ey)), False)
+    for (ri, ci), (ex, ey) in expected.items():
+        if (ri, ci) not in meas:
+            meas[(ri, ci)] = ((float(ex), float(ey)), False)
 
     return meas
 
