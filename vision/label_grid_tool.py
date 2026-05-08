@@ -111,6 +111,20 @@ def cell_from_click(x: int, y: int) -> tuple[int, int] | None:
     return None
 
 
+# ── helpers ───────────────────────────────────────────────────────────────
+
+def _save_group(ts: str, labels: dict, path_map: dict):
+    moved = 0
+    for (row, col), label in labels.items():
+        src = path_map.get((row, col))
+        if src is None or not src.exists():
+            continue
+        dst = LABEL_DIRS[label] / src.name
+        shutil.move(str(src), str(dst))
+        moved += 1
+    print(f"[{ts}] saved {moved} crops")
+
+
 # ── main ──────────────────────────────────────────────────────────────────
 
 clicked_cell = None
@@ -122,6 +136,16 @@ def on_mouse(event, x, y, flags, param):
 
 
 def main():
+    import argparse
+    ap = argparse.ArgumentParser()
+    ap.add_argument(
+        "--static", action="store_true",
+        help="Board never changes: label the first frame interactively, "
+             "then apply those same (row,col)→label mappings to every "
+             "remaining frame automatically.",
+    )
+    args = ap.parse_args()
+
     for d in LABEL_DIRS.values():
         d.mkdir(parents=True, exist_ok=True)
 
@@ -132,6 +156,8 @@ def main():
 
     groups = group_by_ts(images)
     print(f"{len(images)} images in {len(groups)} frame groups.")
+    if args.static:
+        print("--static mode: label the first frame, then all others are labelled the same way.")
     print("Controls: click=cycle label  Enter=accept  s=skip  q=quit")
 
     cv2.namedWindow("Grid labels")
@@ -207,14 +233,21 @@ def main():
                 break
 
         if accepted:
-            for (row, col), label in labels.items():
-                src = path_map.get((row, col))
-                if src is None or not src.exists():
-                    continue
-                dst = LABEL_DIRS[label] / src.name
-                shutil.move(str(src), str(dst))
-            print(f"[{ts}] saved {len(labels)} crops")
-            group_list.pop(g_idx)  # don't advance; next group slides in
+            _save_group(ts, labels, path_map)
+            group_list.pop(g_idx)
+
+            if args.static and group_list:
+                # Apply the same (row,col)→label mapping to every remaining frame
+                print(f"--static: applying same labels to {len(group_list)} remaining frames…")
+                for remaining_ts, remaining_paths in group_list:
+                    rem_path_map: dict[tuple, Path] = {}
+                    for p in remaining_paths:
+                        _, row, col, _ = parse_filename(p.name)
+                        if row is not None and col is not None:
+                            rem_path_map[(row, col)] = p
+                    _save_group(remaining_ts, labels, rem_path_map)
+                group_list.clear()
+                print("Done.")
         elif skip:
             g_idx += 1
 
