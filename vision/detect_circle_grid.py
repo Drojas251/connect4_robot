@@ -81,11 +81,19 @@ class _HoleKF:
     def predict(self):
         self.P += KF_Q * np.eye(2)
 
-    def update(self, z: tuple[float, float], direct: bool):
+    def update(self, z: tuple[float, float], direct: bool,
+               expected: Optional[tuple[float, float]] = None):
         if direct:
-            dist = float(np.linalg.norm(np.asarray(z, float) - self.x))
+            z_arr = np.asarray(z, float)
+            dist_kf = float(np.linalg.norm(z_arr - self.x))
+            if expected is not None:
+                dist_grid = float(np.linalg.norm(z_arr - np.asarray(expected, float)))
+                dist = min(dist_kf, dist_grid)
+            else:
+                dist = dist_kf
             # Scale R up quadratically with distance beyond KF_GATE_R.
-            # A detection 1 gate-radius away → R_DIRECT; 2× away → 4×R_DIRECT; etc.
+            # A detection within KF_GATE_R of EITHER the KF estimate or the
+            # geometric grid center gets full trust; further away → higher R.
             scale = max(1.0, (dist / KF_GATE_R) ** 2)
             R = min(KF_R_DIRECT * scale, KF_R_INFERRED)
         else:
@@ -113,19 +121,24 @@ class GridKalman:
     def step(
         self,
         measurements: dict[tuple[int, int], tuple[tuple[float, float], bool]],
+        expected_centers: Optional[dict[tuple[int, int], tuple[int, int]]] = None,
     ) -> dict[tuple[int, int], tuple[tuple[int, int], float]]:
         """
         Returns {(ri,ci): (smoothed_pos, std_px)} for every known slot.
+        expected_centers: geometric grid centers — used as a second reference
+        point for distance-gating so a detection close to the grid ideal is
+        trusted even when the KF hasn't converged yet.
         """
         seen: set[tuple[int, int]] = set()
 
         for slot, (pos, direct) in measurements.items():
             seen.add(slot)
+            expected = expected_centers.get(slot) if expected_centers else None
             if slot not in self._kfs:
                 self._kfs[slot] = _HoleKF(pos, direct)
             else:
                 self._kfs[slot].predict()
-                self._kfs[slot].update(pos, direct)
+                self._kfs[slot].update(pos, direct, expected=expected)
 
         # Advance time for slots with no measurement this frame
         for slot, kf in self._kfs.items():
@@ -489,7 +502,8 @@ def run_loop(source, kf: GridKalman):
             circles         = detect_circles(frame, bbox)
             assignments, gp = fit_grid(circles)
             meas            = build_measurements(circles, assignments, gp)
-            kf_output       = kf.step(meas)
+            expected        = all_expected_centers(gp) if gp else None
+            kf_output       = kf.step(meas, expected_centers=expected)
 
             direct_slots = {slot for slot, (_, d) in meas.items() if d}
             n_direct   = len(direct_slots)
