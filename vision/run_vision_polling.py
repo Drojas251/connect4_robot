@@ -33,6 +33,18 @@ def circular_crop_from_frame(frame, center_xy, radius):
     return cv2.bitwise_and(patch, patch, mask=mask)
 
 
+def apply_gravity(board: Connect4Board) -> Connect4Board:
+    """Clear any cell that floats above an empty cell in the same column."""
+    for col in range(len(board.grid[0])):
+        seen_empty = False
+        for row in range(len(board.grid)):   # row 0 = bottom
+            if board.grid[row][col] == Cell.EMPTY:
+                seen_empty = True
+            elif seen_empty:
+                board.grid[row][col] = Cell.EMPTY
+    return board
+
+
 def classify_board_from_fixed_holes(frame, holes, classifier, hole_crop_radius):
     board = Connect4Board.empty()
     hole_crops = []
@@ -44,6 +56,15 @@ def classify_board_from_fixed_holes(frame, holes, classifier, hole_crop_radius):
 
         label = "R" if cell == Cell.ROBOT else ("H" if cell == Cell.HUMAN else ".")
         hole_crops.append((hole.row, hole.col, crop, label))
+
+    apply_gravity(board)
+
+    # Recompute labels after gravity correction
+    hole_crops = [
+        (r, c, crop, "R" if board.grid[r][c] == Cell.ROBOT else
+                      "H" if board.grid[r][c] == Cell.HUMAN else ".")
+        for r, c, crop, _ in hole_crops
+    ]
 
     return board, hole_crops
 
