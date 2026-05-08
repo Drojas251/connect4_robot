@@ -4,7 +4,6 @@ import numpy as np
 import joblib
 
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split
 from sklearn.metrics import classification_report, confusion_matrix
 
 
@@ -25,6 +24,17 @@ ID_TO_LABEL = {
 }
 
 
+_N_FEATURES = 81  # 45 stats + 34 histogram bins + 2 sticker fractions
+
+
+# Brightness multipliers used for training augmentation (never applied to test set)
+AUG_BRIGHTNESS = [0.30, 0.45, 0.60, 0.75, 1.25, 1.45, 1.60]
+
+
+def _apply_brightness(bgr: np.ndarray, factor: float) -> np.ndarray:
+    return np.clip(bgr.astype(np.float32) * factor, 0, 255).astype(np.uint8)
+
+
 def extract_features(bgr):
     bgr = cv2.resize(bgr, (64, 64))
 
@@ -35,7 +45,7 @@ def extract_features(bgr):
     mask = np.any(bgr > 10, axis=2)
 
     if np.count_nonzero(mask) == 0:
-        return np.zeros(96, dtype=np.float32)
+        return np.zeros(_N_FEATURES, dtype=np.float32)
 
     features = []
 
@@ -73,47 +83,61 @@ def extract_features(bgr):
     return np.array(features, dtype=np.float32)
 
 
-def load_dataset():
-    X = []
-    y = []
+def load_dataset(augment: bool = True, test_size: float = 0.25, seed: int = 42):
+    """Return (X_train, y_train, X_test, y_test).
+
+    Augmentation is applied only to the training split so test accuracy
+    reflects real-world performance, not augmented copies of train images.
+    """
+    raw: list[tuple[np.ndarray, int]] = []
 
     for label_name, label_id in LABELS.items():
         folder = DATASET_DIR / label_name
-
-        for path in folder.glob("*.png"):
+        for path in sorted(folder.glob("*.png")):
             img = cv2.imread(str(path))
-
             if img is None:
                 continue
+            raw.append((img, label_id))
 
-            X.append(extract_features(img))
-            y.append(label_id)
-
-    if not X:
+    if not raw:
         raise RuntimeError("No labeled images found.")
 
-    return np.vstack(X), np.array(y)
+    rng = np.random.RandomState(seed)
+    idx = np.arange(len(raw))
+    rng.shuffle(idx)
+    split = int(len(idx) * (1 - test_size))
+    train_idx, test_idx = idx[:split], idx[split:]
+
+    def _build(indices, with_aug):
+        X, y = [], []
+        for i in indices:
+            img, label_id = raw[i]
+            X.append(extract_features(img))
+            y.append(label_id)
+            if with_aug:
+                for factor in AUG_BRIGHTNESS:
+                    X.append(extract_features(_apply_brightness(img, factor)))
+                    y.append(label_id)
+        return np.vstack(X), np.array(y)
+
+    X_train, y_train = _build(train_idx, augment)
+    X_test,  y_test  = _build(test_idx,  False)   # never augment test set
+
+    return X_train, y_train, X_test, y_test
 
 
 def main():
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
-    X, y = load_dataset()
+    X_train, y_train, X_test, y_test = load_dataset(augment=True)
 
-    print(f"Loaded {len(y)} samples")
-    for name, idx in LABELS.items():
-        print(f"{name}: {np.sum(y == idx)}")
+    print(f"Train samples (with augmentation): {len(y_train)}")
+    print(f"Test  samples (originals only):    {len(y_test)}")
+    for name, label_id in LABELS.items():
+        print(f"  {name}: train={np.sum(y_train == label_id)}  test={np.sum(y_test == label_id)}")
 
-    if len(set(y)) < 3:
+    if len(set(y_train)) < 3:
         raise RuntimeError("Need examples for empty, yellow, and red.")
-
-    X_train, X_test, y_train, y_test = train_test_split(
-        X,
-        y,
-        test_size=0.25,
-        random_state=42,
-        stratify=y,
-    )
 
     clf = RandomForestClassifier(
         n_estimators=200,
