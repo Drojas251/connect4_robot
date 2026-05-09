@@ -10,7 +10,7 @@ env/
 # Editable install metadata
 *.egg-info/
 
-# Dataset images and frames — too large for git
-vision/vision_piece_dataset/
+# Old dataset archives only — primary vision_piece_dataset/ is tracked
+# so trained model files (e.g. models/piece_cnn.pt) live in git.
 vision/vision_piece_dataset_archive_*/
 logs/
