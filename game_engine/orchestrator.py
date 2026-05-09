@@ -119,6 +119,8 @@ class Connect4Orchestrator:
             raise ValueError("Vision board is not physically valid.")
 
         with self._lock:
+            print(f"[orch] vision update — status={self.state.status.value} board_version={self.state.board_version}")
+
             if self.state.status == ControllerStatus.PAUSED:
                 self.state.board = new_board
                 return RobotMoveResponse(accepted=True, reason="paused")
@@ -129,12 +131,14 @@ class Connect4Orchestrator:
                 self.state.board_version = 1
                 self.state.status = ControllerStatus.HUMAN_TURN
                 self._append_history("initial orchestrator startup")
+                print("[orch] first vision update — setting HUMAN_TURN")
 
             if old_board.to_strings_top_down() == new_board.to_strings_top_down():
                 self.state.board = new_board
                 return RobotMoveResponse(accepted=True, reason="no_change_detected")
 
             inferred = old_board.infer_single_new_move(new_board)
+            print(f"[orch] board changed — inferred={inferred}")
             self.state.board = new_board
             self.state.board_version += 1
             self.state.last_update_time = time.time()
@@ -144,15 +148,18 @@ class Connect4Orchestrator:
                 self.state.status = ControllerStatus.GAME_OVER
                 self.state.winner = "human" if winner_piece.value == "H" else "robot"
                 self._append_history(f"winner={self.state.winner}")
+                print(f"[orch] GAME OVER — winner={self.state.winner}")
                 return RobotMoveResponse(accepted=True, reason="game_over_detected")
 
             if new_board.is_full():
                 self.state.status = ControllerStatus.GAME_OVER
                 self._append_history("draw")
+                print("[orch] GAME OVER — draw")
                 return RobotMoveResponse(accepted=True, reason="board_full")
 
             if inferred is None:
                 self._append_history("vision change without single inferred move")
+                print("[orch] inferred=None (multi-cell change or noise) — skipping robot decision")
                 return RobotMoveResponse(accepted=True, reason="board_updated_no_single_new_move")
 
             _, col, piece = inferred
@@ -163,11 +170,13 @@ class Connect4Orchestrator:
                 self.state.robot_target_col = None
                 self.state.status = ControllerStatus.HUMAN_TURN
                 self._append_history(f"vision confirmed robot in col {col}")
+                print(f"[orch] robot move confirmed col={col} — HUMAN_TURN")
                 return RobotMoveResponse(accepted=True, reason="robot_move_confirmed")
 
             self.state.last_human_col = col
             self.state.status = ControllerStatus.ROBOT_DECIDING
             self._append_history(f"vision sensed human in col {col}")
+            print(f"[orch] human move detected col={col} — triggering robot decision")
 
         return self._decide_and_execute_robot_move()
 
@@ -178,13 +187,21 @@ class Connect4Orchestrator:
             self.state.robot_target_col = decision.column
             self.state.awaiting_robot_confirmation = True
             self._append_history(f"robot target col {decision.column} ({decision.reason})")
+            print(f"[orch] robot decided col={decision.column} reason={decision.reason!r} — moving gantry")
 
-        self.gantry.place_piece(decision.column, timeout=20.0)
+        try:
+            self.gantry.place_piece(decision.column, timeout=20.0)
+        except Exception as e:
+            print(f"[orch] gantry ERROR: {e}")
+            with self._lock:
+                self._append_history(f"gantry error: {e}")
+            raise
 
         with self._lock:
             self._append_history(
                 f"gantry motion complete for col {decision.column}; waiting for vision confirmation"
             )
+            print(f"[orch] gantry done for col={decision.column} — waiting for vision confirmation")
 
         return RobotMoveResponse(
             accepted=True,
