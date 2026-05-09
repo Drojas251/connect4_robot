@@ -79,26 +79,35 @@ class Connect4Orchestrator:
     # ------------------------------------------------------------------
 
     def reset(self):
+        # Announce homing — release lock so get_status() stays responsive during the slow move
         with self._lock:
-            try:
-                self.gantry.axis.home_to_limit(
-                    limit_name="home_min",
-                    direction=-1.0,
-                    home_speed_mm_s=20.0,
-                    home_accel_mm_s2=100.0,
-                    timeout=20.0,
-                    zero_mm=0.0,
-                    backoff_mm=5.0,
-                    backoff_speed_mm_s=10.0,
-                )
-                self._append_history("homed gantry on reset")
-            except Exception as e:
-                self._append_history(f"homing failed on reset: {e}")
-            self.policy.on_game_reset()
+            self.state.status = ControllerStatus.ROBOT_MOVING
+            self.state.robot_target_col = None  # sentinel: no column = homing
+            self._append_history("homing robot…")
+
+        try:
+            self.gantry.axis.home_to_limit(
+                limit_name="home_min",
+                direction=-1.0,
+                home_speed_mm_s=30.0,
+                home_accel_mm_s2=100.0,
+                timeout=60.0,
+                zero_mm=0.0,
+                backoff_mm=5.0,
+                backoff_speed_mm_s=10.0,
+            )
+            with self._lock:
+                self._append_history("homed gantry")
+        except Exception as e:
+            with self._lock:
+                self._append_history(f"homing failed: {e}")
+
+        self.policy.on_game_reset()
+        with self._lock:
             self.state = OrchestratorState()
             self.state.status = ControllerStatus.HUMAN_TURN
             self.state.board_version = 1
-            self._append_history("reset")
+            self._append_history("reset complete — ready for human move")
 
     # ------------------------------------------------------------------
     # Vision update → decide + execute
@@ -202,5 +211,6 @@ def build_orchestrator() -> Connect4Orchestrator:
         column_centers_mm=BOARD.column_centers_mm,
         home_mm=BOARD.home_mm,
         staging_mm=BOARD.staging_mm,
+        right_clearance_mm=BOARD.right_clearance_mm,
     )
     return Connect4Orchestrator(gantry=gantry, policy=MinimaxAI(difficulty="medium"))

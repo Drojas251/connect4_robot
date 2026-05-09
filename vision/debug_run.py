@@ -25,14 +25,14 @@ import cv2
 import numpy as np
 
 try:
-    from .connect4_tag_grid import Connect4TagGridDetector
     from .piece_color_classifier import PieceColorClassifier
     from .learned_piece_classifier import LearnedPieceClassifier
+    from .cnn_piece_classifier import CnnPieceClassifier
     from connect4_robot.game_engine.board import Connect4Board, Cell
 except ImportError:
-    from connect4_tag_grid import Connect4TagGridDetector
     from piece_color_classifier import PieceColorClassifier
     from learned_piece_classifier import LearnedPieceClassifier
+    from cnn_piece_classifier import CnnPieceClassifier
     import sys, os
     sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
     from game_engine.board import Connect4Board, Cell
@@ -123,16 +123,26 @@ def find_grid(cap: cv2.VideoCapture, detector: Connect4TagGridDetector):
 
 
 def make_classifier():
-    force_hsv = os.environ.get("CLASSIFIER", "").lower() == "hsv"
-    if force_hsv:
+    mode = os.environ.get("CLASSIFIER", "").lower()
+    if mode == "hsv":
         print(f"[{ts()}] Using {CYAN}PieceColorClassifier (HSV){RESET}")
         return PieceColorClassifier(debug=VERBOSE)
+    if mode == "rf":
+        print(f"[{ts()}] Using {CYAN}LearnedPieceClassifier (RF){RESET}")
+        return LearnedPieceClassifier(debug=VERBOSE)
+    # Default: CNN → RF → HSV
     try:
-        clf = LearnedPieceClassifier(debug=VERBOSE)
-        print(f"[{ts()}] Using {CYAN}LearnedPieceClassifier{RESET}")
+        clf = CnnPieceClassifier(debug=VERBOSE)
+        print(f"[{ts()}] Using {CYAN}CnnPieceClassifier (CNN){RESET}")
         return clf
     except Exception as e:
-        print(f"[{ts()}] LearnedPieceClassifier unavailable ({e}), falling back to HSV")
+        print(f"[{ts()}] CNN unavailable ({e}), trying RF")
+    try:
+        clf = LearnedPieceClassifier(debug=VERBOSE)
+        print(f"[{ts()}] Using {CYAN}LearnedPieceClassifier (RF){RESET}")
+        return clf
+    except Exception as e:
+        print(f"[{ts()}] RF unavailable ({e}), falling back to HSV")
         return PieceColorClassifier(debug=VERBOSE)
 
 

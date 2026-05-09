@@ -65,6 +65,7 @@ class VisionServiceState:
         self.detected_holes_count: int = 0
         self.detection_image_bytes: Optional[bytes] = None
         self.restart_requested: bool = False
+        self.classifier_name: str = ""
 
         self._lock = threading.Lock()
 
@@ -116,6 +117,7 @@ class VisionServiceState:
                 "detection_message": self.detection_message,
                 "detected_holes_count": self.detected_holes_count,
                 "detection_image_available": self.detection_image_bytes is not None,
+                "classifier_name": self.classifier_name,
             }
 
 
@@ -153,11 +155,19 @@ def apply_gravity(board: Connect4Board) -> Connect4Board:
 
 def classify_board(frame, holes, hole_crop_radius, classifier) -> Connect4Board:
     board = Connect4Board.empty()
+    rows, cols = len(board.grid), len(board.grid[0])
+    skipped = 0
     for hole in holes:
+        if hole.row >= rows or hole.col >= cols:
+            skipped += 1
+            continue
         crop = circular_crop(frame, hole.frame_xy, hole_crop_radius)
         board.grid[hole.row][hole.col] = (
             classifier.classify(crop) if crop is not None else Cell.EMPTY
         )
+    if skipped:
+        print(f"[vision] WARNING: skipped {skipped} holes outside {rows}×{cols} board "
+              f"(locator found {len(holes)} holes — check BOARD.rows/cols in config.py)")
     apply_gravity(board)
     return board
 
@@ -294,6 +304,8 @@ def vision_polling_loop(locator: CircleGridLocator, classifier):
 
             # ── Phase 4: main polling loop ────────────────────────────────
             last_publish_time = 0.0
+            last_image_time = 0.0
+            IMAGE_REFRESH_S = 0.5
 
             while vision_state.is_running and not vision_state.restart_requested:
                 if vision_state.is_paused:
@@ -310,6 +322,14 @@ def vision_polling_loop(locator: CircleGridLocator, classifier):
                 vision_state.update_board(board)
 
                 now = time.time()
+
+                # Update debug image at ~2 fps
+                if now - last_image_time >= IMAGE_REFRESH_S:
+                    vision_state.set_detection_image(
+                        render_detection_image(frame, holes, bbox, hole_crop_radius, board)
+                    )
+                    last_image_time = now
+
                 if now - last_publish_time >= REFRESH_SECONDS:
                     top_down = board.to_strings_top_down()
                     if vision_state.last_published_board != top_down:
@@ -352,6 +372,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 print(f"[vision] LearnedPieceClassifier unavailable ({e}), using PieceColorClassifier")
                 classifier = PieceColorClassifier()
+        vision_state.classifier_name = type(classifier).__name__
 
         vision_state.is_running = True
         vision_thread = threading.Thread(

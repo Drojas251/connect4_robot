@@ -15,13 +15,14 @@ class MotorConfig:
 
 @dataclass
 class BoardConfig:
-    rows: int = 5
-    cols: int = 5
+    rows: int = 6
+    cols: int = 7
     column_centers_mm: List[float] = field(
-        default_factory=lambda: [20.0, 58.0, 96.0, 134.0, 172.0]
+        default_factory=lambda: [248.0, 286.0, 324.0, 362.0, 400.0, 438.0, 476.0]
     )
     home_mm: float = 0.0
     staging_mm: float = 10.0
+    right_clearance_mm: float = 514.0
 
 
 @dataclass

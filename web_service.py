@@ -146,11 +146,20 @@ def vision_image():
 @app.post("/api/reset")
 def api_reset():
     results = {}
-    for name, url in [("orchestrator", SERVICES.orchestrator_url), ("vision", SERVICES.vision_url)]:
-        try:
-            results[name] = requests.post(f"{url}/reset", timeout=10).json()
-        except Exception as e:
-            results[name] = {"error": str(e)}
+    # Orchestrator reset homes the robot — must match the motor homing timeout (60s)
+    try:
+        results["orchestrator"] = requests.post(
+            f"{SERVICES.orchestrator_url}/reset", timeout=75
+        ).json()
+    except Exception as e:
+        results["orchestrator"] = {"error": str(e)}
+    # Vision reset is instant (just sets restart_requested flag)
+    try:
+        results["vision"] = requests.post(
+            f"{SERVICES.vision_url}/reset", timeout=5
+        ).json()
+    except Exception as e:
+        results["vision"] = {"error": str(e)}
     _state.push_board(None)
     return {"ok": True, "results": results}
 
@@ -349,6 +358,28 @@ _HTML = f"""<!doctype html>
     .ts {{ color: #444; font-size: 0.72rem; margin-top: 8px; }}
     @media (max-width: 760px) {{ .main-grid {{ grid-template-columns: 1fr; }} }}
 
+    /* ---- Tabs ---- */
+    .tab-bar {{ display: flex; gap: 4px; margin-bottom: 14px; border-bottom: 1px solid #2a2a2a; padding-bottom: 0; }}
+    .tab-btn {{
+      padding: 8px 22px; border: none; border-radius: 8px 8px 0 0;
+      cursor: pointer; font-size: 0.88rem; font-weight: bold;
+      background: #1a1a1a; color: #666; transition: all 0.15s;
+      border-bottom: 2px solid transparent; margin-bottom: -1px;
+    }}
+    .tab-btn:hover {{ color: #bbb; background: #222; }}
+    .tab-btn.active {{ background: #0d0d0d; color: #fff; border-bottom-color: #2196f3; }}
+    .tab-content {{ display: none; }}
+    .tab-content.active {{ display: block; }}
+
+    /* ---- Debug tab ---- */
+    .debug-layout {{ display: grid; grid-template-columns: 1fr 300px; gap: 20px; align-items: start; }}
+    .debug-feed img {{ width: 100%; border-radius: 10px; border: 1px solid #2a2a2a;
+                       background: #111; display: block; }}
+    .debug-feed .no-feed {{ padding: 60px 0; text-align: center; color: #444;
+                            font-size: 0.9rem; background: #111; border-radius: 10px;
+                            border: 1px solid #2a2a2a; }}
+    @media (max-width: 760px) {{ .debug-layout {{ grid-template-columns: 1fr; }} }}
+
     /* ---- Begin-game modal ---- */
     .modal-overlay {{
       position: fixed; inset: 0; z-index: 1000;
@@ -431,6 +462,13 @@ _HTML = f"""<!doctype html>
     </div>
   </div>
 
+  <div class="tab-bar">
+    <button class="tab-btn active" id="tab-btn-game"  onclick="showTab('game')">Game</button>
+    <button class="tab-btn"        id="tab-btn-debug" onclick="showTab('debug')">Debug</button>
+  </div>
+
+  <div id="tab-game" class="tab-content active">
+
   <div id="actionBanner" class="action-banner">Connecting…</div>
 
   <div class="controls">
@@ -508,6 +546,31 @@ _HTML = f"""<!doctype html>
 
     </div>
   </div>
+
+  </div> <!-- /tab-game -->
+
+  <!-- Debug tab -->
+  <div id="tab-debug" class="tab-content">
+    <div class="debug-layout">
+
+      <div class="debug-feed">
+        <img id="debugImg" alt="Vision feed" style="display:none">
+        <div id="debugNoFeed" class="no-feed">No image yet — switch to Game tab to start detection</div>
+      </div>
+
+      <div class="info-panel">
+        <div class="card">
+          <h3>Vision</h3>
+          <div id="debugVisionStats" class="kv"></div>
+        </div>
+        <div class="card">
+          <h3>Board State</h3>
+          <div id="debugBoardState" class="kv"></div>
+        </div>
+      </div>
+
+    </div>
+  </div> <!-- /tab-debug -->
 
   <script>
     const ROWS = {_ROWS}, COLS = {_COLS};
@@ -594,7 +657,7 @@ _HTML = f"""<!doctype html>
       let text = cfg.text;
       if (s === 'robot_moving') {{
         const col = o.robot_target_col;
-        text = col != null ? `Robot moving to column ${{col}}` : 'Robot moving…';
+        text = col != null ? `Robot moving to column ${{col}}` : 'Robot homing to start position…';
       }} else if (s === 'game_over') {{
         text = o.winner ? `Game over — ${{o.winner}} wins!` : 'Game over — Draw';
       }} else if (s === 'error') {{
@@ -674,6 +737,42 @@ _HTML = f"""<!doctype html>
       el.className = 'svc ' + (ok ? 'ok' : 'err');
     }}
 
+    // ── Tab switching ────────────────────────────────────────────────
+    let _activeTab = 'game';
+    function showTab(name) {{
+      _activeTab = name;
+      document.querySelectorAll('.tab-content').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
+      document.getElementById('tab-' + name).classList.add('active');
+      document.getElementById('tab-btn-' + name).classList.add('active');
+    }}
+
+    // ── Debug tab update ─────────────────────────────────────────────
+    function updateDebugTab(vsvc, visionOk) {{
+      if (_activeTab !== 'debug') return;
+      const imgEl    = document.getElementById('debugImg');
+      const noFeedEl = document.getElementById('debugNoFeed');
+
+      if (visionOk && vsvc.detection_image_available) {{
+        imgEl.src = '/api/vision_image?t=' + Date.now();
+        imgEl.style.display = '';
+        noFeedEl.style.display = 'none';
+      }} else {{
+        imgEl.style.display = 'none';
+        noFeedEl.style.display = '';
+      }}
+
+      document.getElementById('debugVisionStats').innerHTML = kv([
+        ['phase',      vsvc.detection_phase],
+        ['message',    vsvc.detection_message],
+        ['classifier', vsvc.classifier_name],
+        ['frames',     vsvc.frame_count],
+        ['holes',      vsvc.detected_holes_count],
+        ['paused',     vsvc.is_paused ? 'yes' : null],
+        ['last error', vsvc.last_error],
+      ]);
+    }}
+
     async function fetchStatus() {{
       try {{
         const resp = await fetch('/api/status');
@@ -683,6 +782,7 @@ _HTML = f"""<!doctype html>
         setSvc('svcVision', data.vision_svc_ok);
         setSvc('svcOrch',   data.orch_ok);
         updateDetectionPanel(data.vision_svc || {{}});
+        updateDebugTab(data.vision_svc || {{}}, data.vision_svc_ok);
 
         const board = data.vision_board || o.board_top_down || null;
         renderBoard(board, o.last_human_col, o.last_robot_col);
@@ -717,6 +817,7 @@ _HTML = f"""<!doctype html>
     }};
 
     function updateDetectionPanel(vsvc) {{
+      if (_isHoming) return;  // don't overwrite the homing display
       const phase = vsvc && vsvc.detection_phase;
       if (!phase) return;
 
@@ -831,37 +932,44 @@ _HTML = f"""<!doctype html>
       }});
     }}
 
+    let _isHoming = false;
+
+    function _showDetectionPanel(phase, title, msg) {{
+      _detReady = false;
+      if (_detDismissTimer) {{ clearTimeout(_detDismissTimer); _detDismissTimer = null; }}
+      const panel = document.getElementById('detPanel');
+      panel.className = 'det-panel ' + phase;
+      panel.classList.remove('hidden');
+      document.getElementById('detIcon').innerHTML    = DET_CFG[phase]?.icon ?? '<span class="spin">⟳</span>';
+      document.getElementById('detTitle').textContent = title;
+      document.getElementById('detMsg').textContent   = msg;
+      document.getElementById('btnRetry').style.display   = 'none';
+      document.getElementById('btnDismiss').style.display = 'none';
+      document.getElementById('detImg').style.display     = 'none';
+    }}
+
     async function startGame() {{
       document.getElementById('beginModal').classList.add('hidden');
 
-      // Set AI difficulty immediately (fire-and-forget)
+      // Set AI difficulty (fire-and-forget — fast)
       fetch('/api/ai', {{
         method: 'POST',
         headers: {{'Content-Type': 'application/json'}},
         body: JSON.stringify({{name: 'minimax', difficulty: _modalDiff}}),
       }}).catch(e => console.warn('setAI failed:', e));
-
-      // Update inline difficulty buttons right away
       updateDifficultyUI(_modalDiff);
 
-      if (_modalIsReset) {{
-        // Full reset: homes robot + clears board state + restarts vision
-        _detReady = false;
-        if (_detDismissTimer) {{ clearTimeout(_detDismissTimer); _detDismissTimer = null; }}
-        const panel = document.getElementById('detPanel');
-        panel.className = 'det-panel searching';
-        panel.classList.remove('hidden');
-        document.getElementById('detIcon').innerHTML    = DET_CFG.searching.icon;
-        document.getElementById('detTitle').textContent = 'Detecting Board';
-        document.getElementById('detMsg').textContent   = 'Resetting and searching for board…';
-        document.getElementById('btnRetry').style.display   = 'none';
-        document.getElementById('btnDismiss').style.display = 'none';
-        document.getElementById('detImg').style.display     = 'none';
-        fetch('/api/reset', {{method: 'POST'}}).catch(e => console.warn('reset failed:', e));
-      }} else {{
-        // Fresh start: just restart vision detection
-        retryDetection();
-      }}
+      // Show homing panel and block vision updates until homing is done
+      _isHoming = true;
+      _showDetectionPanel('searching', 'Homing Robot', 'Robot is moving to home position…');
+
+      try {{
+        await fetch('/api/reset', {{method: 'POST'}});
+      }} catch(e) {{ console.warn('reset failed:', e); }}
+
+      // Homing done — hand off to vision detection
+      _isHoming = false;
+      _showDetectionPanel('searching', 'Detecting Board', 'Searching for board corners…');
     }}
 
     // Show modal on first load

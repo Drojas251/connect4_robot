@@ -678,6 +678,7 @@ class Connect4Gantry:
         column_centers_mm: list[float],
         home_mm: Optional[float] = None,
         staging_mm: Optional[float] = None,
+        right_clearance_mm: Optional[float] = None,
     ):
         if len(column_centers_mm) < 1:
             raise ValueError("column_centers_mm must not be empty.")
@@ -686,6 +687,7 @@ class Connect4Gantry:
         self.column_centers_mm = column_centers_mm
         self.home_mm = home_mm
         self.staging_mm = staging_mm
+        self.right_clearance_mm = right_clearance_mm
 
     def move_to_column(
         self,
@@ -754,6 +756,28 @@ class Connect4Gantry:
 
         print("[connect4] piece dropped")
 
+    def move_to_clearance(
+        self,
+        col_idx: int,
+        max_vel_mm_s: float = 80.0,
+        max_accel_mm_s2: float = 300.0,
+        timeout: float = 10.0,
+    ):
+        """Move out of the player's way: go to the nearest board edge after a drop."""
+        n = len(self.column_centers_mm)
+        go_left = col_idx < n // 2
+
+        if go_left and self.staging_mm is not None:
+            target_mm = self.staging_mm
+        elif not go_left and self.right_clearance_mm is not None:
+            target_mm = self.right_clearance_mm
+        else:
+            return  # no clearance position configured for this side
+
+        print(f"[connect4] clearing to {'left' if go_left else 'right'} ({target_mm} mm)")
+        self.axis.move_to_mm(target_mm, max_vel_mm_s=max_vel_mm_s, max_accel_mm_s2=max_accel_mm_s2)
+        self.axis.wait_until_done(timeout=timeout)
+
     def place_piece(
         self,
         col_idx: int,
@@ -772,6 +796,7 @@ class Connect4Gantry:
         self.drop_piece(timeout=drop_timeout)
         time.sleep(1.5)  # allow piece to settle
         self.reload_piece(timeout=drop_timeout)
+        self.move_to_clearance(col_idx, max_vel_mm_s=max_vel_mm_s, max_accel_mm_s2=max_accel_mm_s2, timeout=timeout)
 
     def _validate_col(self, col_idx: int):
         if not (0 <= col_idx < 7):

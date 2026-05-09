@@ -10,14 +10,17 @@ except ImportError:
     from train_piece_classifier import extract_features
 
 
+_DEFAULT_MODEL = Path(__file__).parent / "vision_piece_dataset" / "models" / "piece_random_forest.joblib"
+
+
 class LearnedPieceClassifier:
     def __init__(
         self,
-        model_path="vision_piece_dataset/models/piece_random_forest.joblib",
+        model_path=None,
         min_confidence=0.35,
-        debug=True,
+        debug=False,
     ):
-        self.model_path = Path(model_path)
+        self.model_path = Path(model_path) if model_path is not None else _DEFAULT_MODEL
         self.min_confidence = min_confidence
         self.debug = debug
 

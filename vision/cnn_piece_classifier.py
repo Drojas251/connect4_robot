@@ -53,18 +53,22 @@ def build_model(n_classes: int = 3):
     )
 
 
+_DEFAULT_MODEL = Path(__file__).parent / "vision_piece_dataset" / "models" / "piece_cnn.pt"
+
+
 class CnnPieceClassifier:
     """Same classify(circle_bgr) → Cell interface as LearnedPieceClassifier."""
 
     def __init__(
         self,
-        model_path: str = "vision_piece_dataset/models/piece_cnn.pt",
-        debug: bool = True,
+        model_path=None,
+        debug: bool = False,
     ):
         import torch
         self.debug = debug
+        path = Path(model_path) if model_path is not None else _DEFAULT_MODEL
 
-        payload = torch.load(model_path, map_location="cpu", weights_only=False)
+        payload = torch.load(path, map_location="cpu", weights_only=False)
         self.labels: dict = payload["labels"]
         self.model = build_model(n_classes=len(self.labels))
         self.model.load_state_dict(payload["model_state"])
