@@ -144,8 +144,8 @@ def ui():
     button {{ padding: 10px 14px; border: none; border-radius: 8px; cursor: pointer; }}
     .board {{ display: inline-grid; grid-template-columns: repeat({BOARD.cols}, 54px); gap: 8px; padding: 12px; background: #1f4db8; border-radius: 16px; }}
     .cell {{ width: 54px; height: 54px; border-radius: 50%; background: #1b1b1b; display: inline-block; }}
-    .human {{ background: #d64545; }}
-    .robot {{ background: #e2c14d; }}
+    .human {{ background: #fdd835; }}   /* human = yellow */
+    .robot {{ background: #e53935; }}   /* robot = red   */
     .panel {{ margin-top: 16px; display: grid; grid-template-columns: repeat(3, minmax(260px, 420px)); gap: 16px; }}
     .card {{ background: #1c1c1c; padding: 14px; border-radius: 12px; }}
     .mono {{ font-family: monospace; white-space: pre-wrap; }}

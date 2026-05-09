@@ -221,18 +221,38 @@ class Connect4Orchestrator:
             pass
 
 
-def build_orchestrator() -> Connect4Orchestrator:
+def build_orchestrator(sim: bool | None = None) -> Connect4Orchestrator:
+    """Build the orchestrator.
+
+    `sim=True` builds a fake gantry (no serial port, no hardware). When `sim`
+    is None we read the env var `CONNECT4_SIM` (set by `start_services.py
+    --sim`) so the orchestrator service module can stay agnostic.
+    """
+    import os
     from .ai_minimax import MinimaxAI
 
-    transport = MotorTransport(MOTOR.port, MOTOR.baudrate, MOTOR.timeout_s)
-    controller = MotorController(transport)
-    calibration = LinearAxisCalibration(deg_per_mm=MOTOR.deg_per_mm, deg_offset=MOTOR.deg_offset)
-    axis = LinearSliderAxis(controller, calibration)
-    gantry = Connect4Gantry(
-        axis=axis,
-        column_centers_mm=BOARD.column_centers_mm,
-        home_mm=BOARD.home_mm,
-        staging_mm=BOARD.staging_mm,
-        right_clearance_mm=BOARD.right_clearance_mm,
-    )
+    if sim is None:
+        sim = os.environ.get("CONNECT4_SIM", "").lower() in ("1", "true", "yes")
+
+    if sim:
+        from connect4_robot.motor_control.sim_motor import SimGantry
+        gantry = SimGantry(
+            column_centers_mm=BOARD.column_centers_mm,
+            home_mm=BOARD.home_mm,
+            staging_mm=BOARD.staging_mm,
+            right_clearance_mm=BOARD.right_clearance_mm,
+        )
+        print("[orch] running with SIM gantry (no hardware)")
+    else:
+        transport = MotorTransport(MOTOR.port, MOTOR.baudrate, MOTOR.timeout_s)
+        controller = MotorController(transport)
+        calibration = LinearAxisCalibration(deg_per_mm=MOTOR.deg_per_mm, deg_offset=MOTOR.deg_offset)
+        axis = LinearSliderAxis(controller, calibration)
+        gantry = Connect4Gantry(
+            axis=axis,
+            column_centers_mm=BOARD.column_centers_mm,
+            home_mm=BOARD.home_mm,
+            staging_mm=BOARD.staging_mm,
+            right_clearance_mm=BOARD.right_clearance_mm,
+        )
     return Connect4Orchestrator(gantry=gantry, policy=MinimaxAI(difficulty="medium"))
