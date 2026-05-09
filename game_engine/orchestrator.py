@@ -86,22 +86,18 @@ class Connect4Orchestrator:
             self.state.robot_target_col = None  # sentinel: no column = homing
             self._append_history("homing robot…")
 
-        try:
-            self.gantry.axis.home_to_limit(
-                limit_name="home_min",
-                direction=-1.0,
-                home_speed_mm_s=30.0,
-                home_accel_mm_s2=100.0,
-                timeout=60.0,
-                zero_mm=0.0,
-                backoff_mm=5.0,
-                backoff_speed_mm_s=10.0,
-            )
-            with self._lock:
-                self._append_history("homed gantry")
-        except Exception as e:
-            with self._lock:
-                self._append_history(f"homing failed: {e}")
+        self.gantry.axis.home_to_limit(
+            limit_name="home_min",
+            direction=-1.0,
+            home_speed_mm_s=30.0,
+            home_accel_mm_s2=100.0,
+            timeout=60.0,
+            zero_mm=0.0,
+            backoff_mm=5.0,
+            backoff_speed_mm_s=10.0,
+        )
+        with self._lock:
+            self._append_history("homed gantry")
 
         self.policy.on_game_reset()
         with self._lock:
@@ -220,10 +216,7 @@ class Connect4Orchestrator:
                 self._append_history(f"robot move error: {e}")
 
     def shutdown(self):
-        try:
-            self.gantry.axis.controller.shutdown()
-        except Exception:
-            pass
+        self.gantry.axis.controller.shutdown()
 
 
 def build_orchestrator(sim: bool | None = None) -> Connect4Orchestrator:

@@ -27,16 +27,8 @@ from pydantic import BaseModel
 from connect4_robot.config import SERVICES
 from connect4_robot.game_engine.board import Connect4Board, Cell
 
-try:
-    from .circle_grid_locator import CircleGridLocator
-    from .piece_color_classifier import PieceColorClassifier
-    from .learned_piece_classifier import LearnedPieceClassifier
-    from .cnn_piece_classifier import CnnPieceClassifier
-except ImportError:
-    from circle_grid_locator import CircleGridLocator
-    from piece_color_classifier import PieceColorClassifier
-    from learned_piece_classifier import LearnedPieceClassifier
-    from cnn_piece_classifier import CnnPieceClassifier
+from .circle_grid_locator import CircleGridLocator
+from .cnn_piece_classifier import CnnPieceClassifier
 
 
 CAMERA_INDEX = 1
@@ -357,35 +349,19 @@ vision_thread = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global vision_thread
-    try:
-        locator = CircleGridLocator()
-        classifier = None
-        try:
-            classifier = CnnPieceClassifier()
-            print("[vision] Using CnnPieceClassifier")
-        except Exception as e:
-            print(f"[vision] CnnPieceClassifier unavailable ({e})")
-        if classifier is None:
-            try:
-                classifier = LearnedPieceClassifier()
-                print("[vision] Using LearnedPieceClassifier")
-            except Exception as e:
-                print(f"[vision] LearnedPieceClassifier unavailable ({e}), using PieceColorClassifier")
-                classifier = PieceColorClassifier()
-        vision_state.classifier_name = type(classifier).__name__
+    locator = CircleGridLocator()
+    classifier = CnnPieceClassifier()
+    vision_state.classifier_name = type(classifier).__name__
 
-        vision_state.is_running = True
-        vision_thread = threading.Thread(
-            target=vision_polling_loop,
-            args=(locator, classifier),
-            daemon=True,
-        )
-        vision_thread.start()
-        print("[vision] Vision service started")
-        yield
-    except Exception as e:
-        print(f"[vision] Startup error: {e}")
-        vision_state.set_error(str(e))
+    vision_state.is_running = True
+    vision_thread = threading.Thread(
+        target=vision_polling_loop,
+        args=(locator, classifier),
+        daemon=True,
+    )
+    vision_thread.start()
+    print(f"[vision] Vision service started (classifier={vision_state.classifier_name})")
+    try:
         yield
     finally:
         vision_state.is_running = False
