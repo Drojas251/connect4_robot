@@ -126,6 +126,11 @@ class Connect4Orchestrator:
                 self.state.board = new_board
                 return RobotMoveResponse(accepted=True, reason="paused")
 
+            if self.state.status == ControllerStatus.GAME_OVER:
+                # Game already finished — ignore further vision updates so the
+                # final winning board is preserved and no extra moves leak in.
+                return RobotMoveResponse(accepted=False, reason="game_over")
+
             old_board = self.state.board.copy()
 
             if self.state.board_version == 0:

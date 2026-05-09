@@ -97,6 +97,17 @@ def reset():
 
 @app.post("/simulate/human_move")
 def simulate_human_move(req: HumanMoveRequest):
+    # Refuse moves once the game is over so a finished game stays finished.
+    try:
+        orch_pre = get_orchestrator_status()
+        if orch_pre.get("status") == "game_over":
+            raise HTTPException(
+                status_code=400,
+                detail=f"Game over (winner={orch_pre.get('winner')}). Reset to play again.",
+            )
+    except requests.RequestException:
+        pass  # orchestrator unreachable; the POST below will surface the error
+
     legal = state.board.legal_moves()
     if not legal:
         raise HTTPException(status_code=400, detail="No legal human moves.")
@@ -107,6 +118,12 @@ def simulate_human_move(req: HumanMoveRequest):
     state.board.apply_move(col, Cell.HUMAN)
     append_history(f"human sim -> col {col}")
     robot_plan = send_board_if_changed(f"human col {col}")
+
+    # If the human just played the winning move, the orchestrator returns
+    # game_over_detected and never spawns a robot decision — don't wait.
+    if robot_plan.get("reason") == "game_over_detected":
+        append_history(f"human won in col {col}")
+        return {"ok": True, "human_col": col, "robot_col": None, "winner": "human"}
 
     orch = wait_for_robot_motion_complete()
     target_col = orch.get("robot_target_col")
@@ -124,9 +141,10 @@ def simulate_human_move(req: HumanMoveRequest):
 
     state.board.apply_move(target_col, Cell.ROBOT)
     append_history(f"vision sensed robot -> col {target_col}")
-    send_board_if_changed(f"robot confirmation col {target_col}")
+    confirm = send_board_if_changed(f"robot confirmation col {target_col}")
+    winner = "robot" if confirm.get("reason") == "game_over_detected" else None
 
-    return {"ok": True, "human_col": col, "robot_col": target_col}
+    return {"ok": True, "human_col": col, "robot_col": target_col, "winner": winner}
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -149,15 +167,26 @@ def ui():
     .panel {{ margin-top: 16px; display: grid; grid-template-columns: repeat(3, minmax(260px, 420px)); gap: 16px; }}
     .card {{ background: #1c1c1c; padding: 14px; border-radius: 12px; }}
     .mono {{ font-family: monospace; white-space: pre-wrap; }}
+    button:disabled {{ opacity: 0.4; cursor: not-allowed; }}
+    #winnerBanner {{
+      display: none; margin: 12px 0; padding: 14px 18px; border-radius: 10px;
+      font-size: 1.15rem; font-weight: bold; text-align: center;
+      background: #1b5e20; color: #fff; border: 2px solid #4caf50;
+    }}
+    #winnerBanner.robot {{ background: #b71c1c; border-color: #f44336; }}
+    #winnerBanner.human {{ background: #f9a825; color: #111; border-color: #fdd835; }}
+    #winnerBanner.draw  {{ background: #424242; border-color: #757575; }}
   </style>
 </head>
 <body>
   <h1>Connect 4 Vision Sim Service</h1>
   <div>This page is the simulated camera-side world state. Human and robot pieces both appear here only when the vision service "senses" them.</div>
 
+  <div id="winnerBanner"></div>
+
   <div class="controls">
-    <button onclick="simulateHumanMove()">Simulate random human move</button>
-    {''.join(f'<button onclick="simulateHumanMove({c})">Col {c}</button>' for c in range(BOARD.cols))}
+    <button class="col-btn" onclick="simulateHumanMove()">Simulate random human move</button>
+    {''.join(f'<button class="col-btn" onclick="simulateHumanMove({c})">Col {c}</button>' for c in range(BOARD.cols))}
     <button onclick="resetAll()">Reset</button>
   </div>
 
@@ -217,6 +246,21 @@ def ui():
             'awaiting_robot_confirmation: ' + o.awaiting_robot_confirmation + '\\n\\n' +
             o.pretty;
         }}
+
+        // Winner banner + lock out further moves once the game ends.
+        const banner = document.getElementById('winnerBanner');
+        const gameOver = !!o && o.status === 'game_over';
+        if (gameOver) {{
+          const w = o.winner;
+          banner.className = w === 'human' ? 'human' : (w === 'robot' ? 'robot' : 'draw');
+          banner.textContent = w === 'human' ? '🎉 Human wins!'
+                              : w === 'robot' ? '🤖 Robot wins!'
+                              : 'Draw — board full.';
+          banner.style.display = 'block';
+        }} else {{
+          banner.style.display = 'none';
+        }}
+        document.querySelectorAll('.col-btn').forEach(b => {{ b.disabled = gameOver; }});
 
         document.getElementById('history').textContent =
           (data.move_history || []).join('\\n');
