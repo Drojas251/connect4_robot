@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "connect4_robot"
+version = "0.1.0"
+description = "Connect 4 playing robot — vision + orchestrator + web services"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi",
+    "uvicorn[standard]",
+    "requests",
+    "pydantic>=2",
+    "pyserial",
+]
+
+# Heavier deps only needed for the real (camera-based) vision service.
+# In --sim mode none of these are imported.
+[project.optional-dependencies]
+vision = [
+    "pillow",
+    "pupil-apriltags",
+    "scikit-learn",
+    "joblib",
+    "opencv-python",
+    "numpy",
+    "torch",
+    "torchvision",
+]
+
+[tool.setuptools]
+packages = [
+    "connect4_robot",
+    "connect4_robot.game_engine",
+    "connect4_robot.motor_control",
+    "connect4_robot.vision",
+]
+
+[tool.setuptools.package-dir]
+"connect4_robot" = "."
+"connect4_robot.game_engine" = "game_engine"
+"connect4_robot.motor_control" = "motor_control"
+"connect4_robot.vision" = "vision"

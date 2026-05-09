@@ -7,6 +7,9 @@ venv/
 .venv/
 env/
 
+# Editable install metadata
+*.egg-info/
+
 # Dataset images and frames — too large for git
 vision/vision_piece_dataset/
 vision/vision_piece_dataset_archive_*/
