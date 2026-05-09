@@ -1,9 +1,0 @@
-fastapi
-"uvicorn[standard]"
-requests
-pydantic
-pyserial
-pillow
-pupil-apriltags
-scikit-learn
-joblib

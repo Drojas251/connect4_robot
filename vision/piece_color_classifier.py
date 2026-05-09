@@ -1,10 +1,7 @@
 import cv2
 import numpy as np
 
-try:
-    from .board import Cell
-except ImportError:
-    from board import Cell
+from connect4_robot.game_engine.board import Cell
 
 
 class PieceColorClassifier:

@@ -2,12 +2,8 @@ from pathlib import Path
 import joblib
 import numpy as np
 
-try:
-    from .board import Cell
-    from .train_piece_classifier import extract_features
-except ImportError:
-    from board import Cell
-    from train_piece_classifier import extract_features
+from connect4_robot.game_engine.board import Cell
+from .train_piece_classifier import extract_features
 
 
 _DEFAULT_MODEL = Path(__file__).parent / "vision_piece_dataset" / "models" / "piece_random_forest.joblib"
