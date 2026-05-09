@@ -31,6 +31,7 @@ class Connect4Orchestrator:
         self._ai_difficulty: str = getattr(policy, "difficulty", "")
         self.state = OrchestratorState()
         self._lock = threading.RLock()
+        self._robot_thread: threading.Thread | None = None
 
     # ------------------------------------------------------------------
     # Policy hot-swap
@@ -176,38 +177,42 @@ class Connect4Orchestrator:
             self.state.last_human_col = col
             self.state.status = ControllerStatus.ROBOT_DECIDING
             self._append_history(f"vision sensed human in col {col}")
-            print(f"[orch] human move detected col={col} — triggering robot decision")
+            print(f"[orch] human move detected col={col} — spawning robot decision thread")
 
-        return self._decide_and_execute_robot_move()
-
-    def _decide_and_execute_robot_move(self) -> RobotMoveResponse:
-        with self._lock:
-            decision = self.policy.choose_move(self.state.board)
-            self.state.status = ControllerStatus.ROBOT_MOVING
-            self.state.robot_target_col = decision.column
-            self.state.awaiting_robot_confirmation = True
-            self._append_history(f"robot target col {decision.column} ({decision.reason})")
-            print(f"[orch] robot decided col={decision.column} reason={decision.reason!r} — moving gantry")
-
-        try:
-            self.gantry.place_piece(decision.column, timeout=20.0)
-        except Exception as e:
-            print(f"[orch] gantry ERROR: {e}")
-            with self._lock:
-                self._append_history(f"gantry error: {e}")
-            raise
-
-        with self._lock:
-            self._append_history(
-                f"gantry motion complete for col {decision.column}; waiting for vision confirmation"
+            # Run gantry motion in a background thread so this HTTP request
+            # returns immediately — vision has a 5s publish timeout and would
+            # drop the update if we blocked here for the full ~15s move.
+            self._robot_thread = threading.Thread(
+                target=self._decide_and_execute_robot_move, daemon=True
             )
-            print(f"[orch] gantry done for col={decision.column} — waiting for vision confirmation")
+            self._robot_thread.start()
 
-        return RobotMoveResponse(
-            accepted=True,
-            chosen_column=decision.column,
-            reason=decision.reason,
-        )
+        return RobotMoveResponse(accepted=True, reason="robot_decision_started")
+
+    def _decide_and_execute_robot_move(self) -> None:
+        try:
+            with self._lock:
+                decision = self.policy.choose_move(self.state.board)
+                self.state.status = ControllerStatus.ROBOT_MOVING
+                self.state.robot_target_col = decision.column
+                self.state.awaiting_robot_confirmation = True
+                self._append_history(f"robot target col {decision.column} ({decision.reason})")
+                print(f"[orch] robot decided col={decision.column} reason={decision.reason!r} — moving gantry")
+
+            self.gantry.place_piece(decision.column, timeout=20.0)
+
+            with self._lock:
+                self._append_history(
+                    f"gantry motion complete for col {decision.column}; waiting for vision confirmation"
+                )
+                print(f"[orch] gantry done for col={decision.column} — waiting for vision confirmation")
+
+        except Exception as e:
+            print(f"[orch] robot move ERROR: {e}")
+            with self._lock:
+                self.state.status = ControllerStatus.ERROR
+                self.state.last_error = str(e)
+                self._append_history(f"robot move error: {e}")
 
     def shutdown(self):
         try:
